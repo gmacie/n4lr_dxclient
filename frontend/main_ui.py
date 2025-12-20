@@ -1,10 +1,10 @@
-# main_ui.py 12/7/2025
+# main_ui.py 12/20/2025
 
 import flet as ft
 import asyncio
 import time
 
-from backend.message_bus import register_callback
+from backend.message_bus import register_callback, publish
 from frontend.components.status_bar import build_status_bar
 from frontend.components.live_spot_table import LiveSpotTable
 from frontend.components.prefix_filter_window import PrefixFilterWindow
@@ -83,15 +83,116 @@ class MainUI(ft.Column):
             spacing=20,
         )
 
+        # Command input
+        self.command_field = ft.TextField(
+            label="Cluster Command",
+            hint_text="e.g., set/filter doc/pass k,ve",
+            width=400,
+            on_submit=self._send_command,
+        )
+
+        self.send_button = ft.ElevatedButton(
+            text="Send",
+            on_click=self._send_command,
+        )
+
+        self.help_button = ft.IconButton(
+            icon=ft.Icons.HELP_OUTLINE,
+            tooltip="Show common commands",
+            on_click=self._show_command_help,
+        )
+
+        command_row = ft.Row(
+            [
+                ft.Text("Command:", weight=ft.FontWeight.BOLD),
+                self.command_field,
+                self.send_button,
+                self.help_button,
+            ],
+            spacing=10,
+        )
+
         self.controls = [
             self.status_bar,
             filter_row,
+            command_row,
             ft.Divider(),
             self.table,
         ]
 
         # start spot rate timer
         self.page.run_task(self._spot_rate_timer)
+
+    # ------------------------------------------------------------
+    # COMMAND HANDLING
+    # ------------------------------------------------------------
+    def _send_command(self, e):
+        """Send command to cluster"""
+        cmd = self.command_field.value.strip()   
+        #print(f"DEBUG: _send_command called with: '{cmd}'")  # <-- ADD THIS
+        if not cmd:
+            #print("DEBUG: Command was empty!")  # <-- ADD THIS
+            return
+    
+        # Publish command to backend via message bus
+        #print(f"DEBUG: Publishing command: {cmd}")  # <-- ADD THIS
+        publish({"type": "cluster_command", "data": cmd})
+    
+        # Clear the field
+        self.command_field.value = ""
+        self.command_field.update()
+        #print("DEBUG: Command sent and field cleared")  # <-- ADD THIS
+
+    def _show_command_help(self, e):
+        """Show dialog with common commands"""
+        #print("DEBUG: Help button clicked!")  # <-- ADD THIS
+        help_text = """Common VE7CC Cluster Commands:
+
+FILTERS (reduce spot volume):
+  set/filter doc/pass k,ve        - Only spots from US/Canada
+  set/filter dxcty/pass <prefix>  - Only spots for specific countries
+  set/filter dxbm/pass 20,15,10   - Only specific bands
+  set/nofilter                    - Reset all filters
+  sh/filter                       - Show current filters
+
+DISPLAY OPTIONS:
+  set/noskimmer   - Turn off skimmer spots
+  set/skimmer     - Turn on skimmer spots
+  set/nobeacon    - Turn off beacon spots
+  set/grid        - Show grid squares
+  set/dxs         - Show DX state/country
+  
+INFORMATION:
+  sh/dx           - Show last 30 spots
+  sh/dx/100       - Show last 100 spots
+  sh/dx <call>    - Show spots for specific call
+  sh/mydx         - Show spots matching your filters
+  sh/settings     - Show your current settings
+
+SPOT:
+  dx <freq> <call> <comment>      - Send a DX spot
+
+Press Enter in command field or click Send to execute."""
+
+        dialog = ft.AlertDialog(
+            title=ft.Text("Cluster Commands"),
+            content=ft.Container(
+                content=ft.Text(help_text, selectable=True),
+                width=600,
+            ),
+            actions=[
+                ft.TextButton("Close", on_click=lambda _: self._close_dialog()),
+            ],
+        )
+        self.page.dialog = dialog
+        dialog.open = True
+        self.page.update()
+
+    def _close_dialog(self):
+        #print("DEBUG: Closing dialog")  # <-- ADD THIS
+        if self.page.dialog:
+            self.page.dialog.open = False
+            self.page.update()
 
     # ------------------------------------------------------------
     # BACKEND MESSAGE HANDLER
