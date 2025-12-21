@@ -55,6 +55,7 @@ async def run_cluster_monitor():
     def on_command(msg: dict):
         if msg.get("type") == "cluster_command":
             cmd = msg.get("data", "")
+            print(f"DEBUG BACKEND: Received command: '{cmd}'")
             if cmd:
                 command_queue.put_nowait(cmd)
     

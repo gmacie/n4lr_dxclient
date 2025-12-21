@@ -1,17 +1,24 @@
 import flet as ft
+import time
+
 
 class LiveSpotTable(ft.Column):
     """Live DX spot table with basic filters."""
-
+    
     def __init__(self):
         super().__init__()
-
         self.spots: list[dict] = []
-        self.filter_band: str = "ALL"
+        # Initialize with all bands selected by default
+        self.filter_bands: list[str] = ["160M", "80M", "60M", "40M", "30M", "20M", "17M", "15M", "12M", "10M", "6M"]
         self.filter_grid: str = ""
         self.filter_dxcc: str = ""
-        self.max_spots: int = 500
-
+        self.max_spots: int = 100  # Reduced from 500 for better performance
+        
+        # Batching for performance - rebuild at most every N seconds
+        self.last_rebuild_time: float = 0
+        self.rebuild_interval: float = 2.0  # Rebuild every 2 seconds max
+        self.needs_rebuild: bool = False
+        
         self.table = ft.DataTable(
             columns=[
                 ft.DataColumn(ft.Text("Time")),
@@ -28,52 +35,82 @@ class LiveSpotTable(ft.Column):
             heading_row_height=32,
             data_row_max_height=32,
         )
-
+        
         self._list_view = ft.ListView(
             controls=[self.table],
             expand=True,
             auto_scroll=False,
         )
-
+        
         self.controls = [self._list_view]
         self.expand = True
-
+    
     # ---------------------------------------------------
     def add_spot(self, spot: dict):
+        """Add spot to list and rebuild if enough time has passed"""
         self.spots.insert(0, spot)
         if len(self.spots) > self.max_spots:
             self.spots = self.spots[: self.max_spots]
-        self._rebuild_rows()
-
+        
+        # Check if enough time has passed since last rebuild
+        current_time = time.time()
+        if current_time - self.last_rebuild_time >= self.rebuild_interval:
+            self._rebuild_rows()
+            self.last_rebuild_time = current_time
+            self.needs_rebuild = False
+        else:
+            # Mark that we need a rebuild later
+            self.needs_rebuild = True
+    
     # ---------------------------------------------------
-    def set_filters(self, band: str, grid: str, dxcc: str):
-        self.filter_band = (band or "ALL").upper()
+    def set_filters(self, bands: list[str], grid: str, dxcc: str):
+        """Update filters and clear existing spots for immediate clean display"""
+        self.filter_bands = [b.upper() for b in bands] if bands else []
         self.filter_grid = (grid or "").upper()
         self.filter_dxcc = (dxcc or "").upper()
-        self._rebuild_rows()
-
+        
+        # Clear all existing spots when filter changes
+        #self.clear_spots()
+    
+    # ---------------------------------------------------
+    def clear_spots(self):
+        """Clear all spots from the table"""
+        self.spots = []
+        self.table.rows = []
+        try:
+            self.table.update()
+        except:
+            pass  # Control not yet added to page
+    
     # ---------------------------------------------------
     def _passes_filters(self, s: dict) -> bool:
         band = str(s.get("band", "")).upper()
         grid = str(s.get("grid", "")).upper()
         dxcc = str(s.get("dxcc", "")).upper()
-
-        if self.filter_band != "ALL" and band != self.filter_band:
-            return False
+        
+        # Band filter: if list is empty, show NOTHING; if list has items, show only those bands
+        if len(self.filter_bands) == 0:
+            return False  # No bands selected = show nothing
+        
+        if band not in self.filter_bands:
+            return False  # This band is not in the selected list
+        
         if self.filter_grid and not grid.startswith(self.filter_grid):
             return False
+        
         if self.filter_dxcc and self.filter_dxcc not in dxcc:
             return False
-
+        
         return True
-
+    
     # ---------------------------------------------------
     def _rebuild_rows(self):
         rows: list[ft.DataRow] = []
+        
         for s in self.spots:
             if not self._passes_filters(s):
                 continue
-
+            
             rows.append(
                 ft.DataRow(
                     cells=[
@@ -88,6 +125,9 @@ class LiveSpotTable(ft.Column):
                     ]
                 )
             )
-
+        
         self.table.rows = rows
-        self.table.update()
+        try:
+            self.table.update()
+        except:
+            pass  # Control not yet added to page
