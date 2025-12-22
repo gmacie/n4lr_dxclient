@@ -9,7 +9,6 @@ from backend.config import get_user_grid
 from backend.solar import fetch_solar_data, get_solar_data
 from frontend.components.status_bar import build_status_bar
 from frontend.components.live_spot_table import LiveSpotTable
-from frontend.components.prefix_filter_window import PrefixFilterWindow
 from frontend.components.settings_tab import SettingsTab
 
 
@@ -22,7 +21,6 @@ class MainUI(ft.Column):
 
         self.blocked_prefixes: set[str] = set()
         self.recent_spot_times: list[float] = []
-        self.prefix_filter_window: PrefixFilterWindow | None = None
 
         # Load user's grid for sun times
         user_grid = get_user_grid()
@@ -98,11 +96,18 @@ class MainUI(ft.Column):
             width=140,
             on_change=self._filters_changed,
         )
-
-        self.prefix_button = ft.IconButton(
-            icon=ft.Icons.FILTER_LIST,
-            tooltip="DXCC Prefix Filters",
-            on_click=self._open_prefix_window,
+        
+        # Quick filter buttons
+        self.reject_kve_button = ft.ElevatedButton(
+            text="Reject K,VE",
+            tooltip="Quick reject US/Canada",
+            on_click=self._quick_reject_kve,
+        )
+        
+        self.reset_filters_button = ft.ElevatedButton(
+            text="Reset Filters",
+            tooltip="Clear all server filters",
+            on_click=self._quick_reset_filters,
         )
 
         other_filters_row = ft.Row(
@@ -110,7 +115,8 @@ class MainUI(ft.Column):
                 ft.Text("Filters:", weight=ft.FontWeight.BOLD),
                 self.grid_field,
                 self.dxcc_field,
-                self.prefix_button,
+                self.reject_kve_button,
+                self.reset_filters_button,
             ],
             spacing=10,
         )
@@ -239,8 +245,19 @@ class MainUI(ft.Column):
         self.none_bands_checkbox.update()
         
         self._filters_changed()
-
+ 
     # ------------------------------------------------------------
+    # QUICK FILTER BUTTONS
+    # ------------------------------------------------------------
+    def _quick_reject_kve(self, e):
+        """Quick button to reject K and VE spots"""
+        publish({"type": "cluster_command", "data": "set/filter dxcty/reject k,ve"})
+
+    def _quick_reset_filters(self, e):
+        """Quick button to reset all server filters"""
+        publish({"type": "cluster_command", "data": "set/nofilter"})
+        # ------------------------------------------------------------
+    
     # SETTINGS CHANGED HANDLER
     # ------------------------------------------------------------
     def _on_settings_changed(self, callsign, grid):
@@ -278,56 +295,70 @@ class MainUI(ft.Column):
 
     def _show_command_help(self, e):
         """Show dialog with common commands"""
-        # print("DEBUG: Help button clicked!")
+        print("DEBUG: Help button clicked!")
+    
         help_text = """Common VE7CC Cluster Commands:
 
-FILTERS (reduce spot volume):
-  set/filter doc/pass k,ve        - Only spots from US/Canada
-  set/filter dxcty/reject k       - Reject US (K) spots
-  set/filter dxcty/pass <prefix>  - Only spots for specific countries
-  set/filter dxbm/pass 20,15,10   - Only specific bands
-  set/nofilter                    - Reset all filters
-  sh/filter                       - Show current filters
+    FILTERS (reduce spot volume):
+      set/filter doc/pass k,ve        - Only spots from US/Canada
+      set/filter dxcty/reject k       - Reject US (K) spots
+      set/filter dxcty/pass <prefix>  - Only spots for specific countries
+      set/filter dxbm/pass 20,15,10   - Only specific bands
+      set/nofilter                    - Reset all filters
+      sh/filter                       - Show current filters
 
-DISPLAY OPTIONS:
-  set/noskimmer   - Turn off skimmer spots
-  set/skimmer     - Turn on skimmer spots
-  set/nobeacon    - Turn off beacon spots
-  set/grid        - Show grid squares
-  set/dxs         - Show DX state/country
+    DISPLAY OPTIONS:
+      set/noskimmer   - Turn off skimmer spots
+      set/skimmer     - Turn on skimmer spots
+      set/nobeacon    - Turn off beacon spots
+      set/grid        - Show grid squares
+      set/dxs         - Show DX state/country
   
-INFORMATION:
-  sh/dx           - Show last 30 spots
-  sh/dx/100       - Show last 100 spots
-  sh/dx <call>    - Show spots for specific call
-  sh/mydx         - Show spots matching your filters
-  sh/settings     - Show your current settings
+    INFORMATION:
+      sh/dx           - Show last 30 spots
+      sh/dx/100       - Show last 100 spots
+      sh/dx <call>    - Show spots for specific call
+      sh/mydx         - Show spots matching your filters
+      sh/settings     - Show your current settings
 
-SPOT:
-  dx <freq> <call> <comment>      - Send a DX spot
+    SPOT:
+      dx <freq> <call> <comment>      - Send a DX spot
 
-Press Enter in command field or click Send to execute."""
+    Press Enter in command field or click Send to execute."""
 
-        dialog = ft.AlertDialog(
-            title=ft.Text("Cluster Commands"),
+        
+        def close_bs(e):
+            bs.open = False
+            self.page.update()
+    
+        bs = ft.BottomSheet(
             content=ft.Container(
-                content=ft.Text(help_text, selectable=True),
-                width=600,
+                content=ft.Column([
+                    ft.Row([
+                    ft.Text("Cluster Commands", size=20, weight=ft.FontWeight.BOLD),
+                    ft.IconButton(icon=ft.Icons.CLOSE, on_click=close_bs),
+                ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                ft.Divider(),
+                ft.Container(
+                    content=ft.Text(help_text, selectable=True, size=13),
+                    height=500,  # Fixed height
+                ),
+            ], scroll=ft.ScrollMode.AUTO),
+            padding=20,
+            height=600,  # Make it taller    
             ),
-            actions=[
-                ft.TextButton("Close", on_click=lambda _: self._close_dialog()),
-            ],
         )
-        self.page.dialog = dialog
-        dialog.open = True
+    
+        self.page.overlay.append(bs)
+        bs.open = True
         self.page.update()
-
+    
     def _close_dialog(self):
         # print("DEBUG: Closing dialog")
         if self.page.dialog:
             self.page.dialog.open = False
             self.page.update()
-
+            
     # ------------------------------------------------------------
     # BACKEND MESSAGE HANDLER
     # ------------------------------------------------------------
@@ -381,22 +412,6 @@ Press Enter in command field or click Send to execute."""
             grid=self.grid_field.value,
             dxcc=self.dxcc_field.value,
         )
-
-    # ------------------------------------------------------------
-    # PREFIX WINDOW
-    # ------------------------------------------------------------
-    def _open_prefix_window(self, e):
-        if not self.prefix_filter_window:
-            self.prefix_filter_window = PrefixFilterWindow(
-                page=self.page,
-                on_apply=self._apply_prefix_filter,
-                initial_blocked=self.blocked_prefixes,
-            )
-        self.prefix_filter_window.open()
-
-    def _apply_prefix_filter(self, prefixes: set[str]):
-        self.blocked_prefixes = prefixes
-        self._filters_changed()
 
     @staticmethod
     def _extract_prefix(call: str) -> str:

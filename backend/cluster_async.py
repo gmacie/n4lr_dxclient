@@ -15,7 +15,35 @@ spotDXCountry      = 16
 spotDXGrid         = 18
 spotSpotterState   = 15
 
+# CC11^Freq^DX^date^time^spotter^comments^hops^rx via node^origin node^spotter itu^spotter cq^dx itu^dx cq^spotter state^
+# dx state^spotter cty^dx cty^spotter grid^dx grid^^spot type^Spotter IP Address^timestamp
+
+#  0  CC11^
+#  1  DX Frequency^  YES
+#  2  DX station's callsign^  YES
+#  3  Date^  YES
+#  4  Time^  YES
+#  5  Spotter Callsign^
+#  6  Comments^  YES
+#  7  Hops^
+#  8  RX via node^  NO
+#  9  Origin node^  NO
+#  10 Spotter ITU zone^  NO
+#  11 Spotter CQ zone^  NO
+#  12 DX station's ITU zone^  NO
+#  13 DX station's CQ zone^  YES
+#  14 Spotter's state^
+#  15 DX station's state^  YES
+#  16 Spotter DXCC entity^
+#  17 DX station's DXCC entity^  YES
+#  18 Spotter's grid^  YES
+#  19 DX station's grid^  YES
+#  20 spot type^
+#  21 Spotter IP Address^
+#  22 timestamp
+
 # Simple ARRL band plan in kHz
+
 ARRL_BAND_PLAN = [
     (1800,  2000,  "160m"),
     (3500,  4000,  "80m"),
@@ -69,10 +97,11 @@ async def run_cluster_monitor():
                 publish({"type": "status", "data": "Cluster connected"})
                 
                 # login commands
-                writer.write(b"N4LR\n")
+                writer.write(b"N4LR-17\n")
                 writer.write(b"set/nofilter\n")
                 writer.write(b"set/ve7cc\n")
                 writer.write(b"set/skimmer\n")
+                writer.write(b"set/nodedupe\n")
                 await writer.drain()
                 
                 # Start task to handle commands from UI

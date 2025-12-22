@@ -1,6 +1,13 @@
 import flet as ft
 import time
 
+try:
+    from backend.dxcc_challenge import is_needed
+    CHALLENGE_AVAILABLE = True
+except:
+    CHALLENGE_AVAILABLE = False
+    print("DXCC Challenge module not available")
+
 
 class LiveSpotTable(ft.Column):
     """Live DX spot table with basic filters."""
@@ -64,13 +71,13 @@ class LiveSpotTable(ft.Column):
     
     # ---------------------------------------------------
     def set_filters(self, bands: list[str], grid: str, dxcc: str):
-        """Update filters and clear existing spots for immediate clean display"""
+        """Update filters and rebuild table with current spots"""
         self.filter_bands = [b.upper() for b in bands] if bands else []
         self.filter_grid = (grid or "").upper()
         self.filter_dxcc = (dxcc or "").upper()
         
-        # Clear all existing spots when filter changes
-        #self.clear_spots()
+        # Rebuild to apply new filters (don't clear - just re-filter existing spots)
+        self._rebuild_rows()
     
     # ---------------------------------------------------
     def clear_spots(self):
@@ -111,20 +118,29 @@ class LiveSpotTable(ft.Column):
             if not self._passes_filters(s):
                 continue
             
-            rows.append(
-                ft.DataRow(
-                    cells=[
-                        ft.DataCell(ft.Text(s.get("time", ""))),
-                        ft.DataCell(ft.Text(s.get("band", ""))),
-                        ft.DataCell(ft.Text(s.get("freq", ""))),
-                        ft.DataCell(ft.Text(s.get("call", ""))),
-                        ft.DataCell(ft.Text(s.get("dxcc", ""))),
-                        ft.DataCell(ft.Text(s.get("grid", ""))),
-                        ft.DataCell(ft.Text(s.get("spotter", ""))),
-                        ft.DataCell(ft.Text(s.get("comment", ""))),
-                    ]
-                )
+            # Check if this spot is needed for DXCC Challenge
+            needed = False
+            if CHALLENGE_AVAILABLE:
+                try:
+                    needed = is_needed(s.get("dxcc", ""), s.get("band", ""))
+                except:
+                    pass
+            
+            # Create row with red background if needed
+            row = ft.DataRow(
+                cells=[
+                    ft.DataCell(ft.Text(s.get("time", ""))),
+                    ft.DataCell(ft.Text(s.get("band", ""))),
+                    ft.DataCell(ft.Text(s.get("freq", ""))),
+                    ft.DataCell(ft.Text(s.get("call", ""))),
+                    ft.DataCell(ft.Text(s.get("dxcc", ""))),
+                    ft.DataCell(ft.Text(s.get("grid", ""))),
+                    ft.DataCell(ft.Text(s.get("spotter", ""))),
+                    ft.DataCell(ft.Text(s.get("comment", ""))),
+                ],
+                color=ft.Colors.RED_100 if needed else None,  # Light red background for needed spots
             )
+            rows.append(row)
         
         self.table.rows = rows
         try:
