@@ -113,8 +113,37 @@ async def run_cluster_monitor(server_host: str = None, server_port: int = None):
                         
                     if not s:
                         continue
-                    
-                    if s.startswith(("WCY", "WWV", "To ")):
+                        
+                    # Parse WWV solar data from cluster
+                    if s.startswith("WWV"):
+                        # Skip WWV header line
+                        continue
+                        
+                    # Parse solar data lines (format: "23-Dec-2025   15   133  25   4 Minor...")
+                    if "-2025" in s and len(s) > 30:  # Looks like a date line
+                        parts_wwv = s.split()
+                        if len(parts_wwv) >= 5:
+                            try:
+                                # Parse: Date Hour SFI A K ...
+                                sfi = float(parts_wwv[2])  # "133"
+                                a = int(parts_wwv[3])      # "25"
+                                k = int(parts_wwv[4])      # "4"
+                
+                                # Publish solar data update
+                                publish({
+                                    "type": "solar_update",
+                                    "data": {
+                                        "sfi": sfi,
+                                        "a": a,
+                                        "k": k,
+                                    }
+                                })
+                                continue  # Don't process as spot
+                            except (ValueError, IndexError):
+                                pass  # Not a valid solar line
+    
+                    # Skip other non-spot lines
+                    if s.startswith(("WCY", "To ")):
                         continue
                     
                     parts = s.split("^")

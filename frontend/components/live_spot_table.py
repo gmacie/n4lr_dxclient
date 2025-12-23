@@ -2,6 +2,13 @@ import flet as ft
 import time
 
 try:
+    from backend.lotw_users import is_lotw_user, get_upload_age_days
+    LOTW_AVAILABLE = True
+except:
+    LOTW_AVAILABLE = False
+    print("LoTW user lookup not available")
+
+try:
     from backend.dxcc_challenge import is_needed
     CHALLENGE_AVAILABLE = True
 except:
@@ -113,11 +120,11 @@ class LiveSpotTable(ft.Column):
     # ---------------------------------------------------
     def _rebuild_rows(self):
         rows: list[ft.DataRow] = []
-        
+    
         for s in self.spots:
             if not self._passes_filters(s):
                 continue
-            
+        
             # Check if this spot is needed for DXCC Challenge
             needed = False
             if CHALLENGE_AVAILABLE:
@@ -125,43 +132,46 @@ class LiveSpotTable(ft.Column):
                     needed = is_needed(s.get("dxcc", ""), s.get("band", ""))
                 except:
                     pass
-            
-            
-            
-            # Create row with red background if needed
-            # Create row with amber background if needed (better contrast than red)
+        
+            # Format callsign with LoTW indicator
+            call = s.get("call", "")
+            if LOTW_AVAILABLE and is_lotw_user(call):
+                age_days = get_upload_age_days(call)
+                if age_days and age_days <= 90:
+                    # Active user - green +
+                    call_display = ft.Row([
+                        ft.Text("+", color=ft.Colors.GREEN, weight=ft.FontWeight.BOLD),
+                        ft.Text(call, color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None),
+                    ], spacing=2)
+                else:
+                    # Inactive user - orange +
+                    call_display = ft.Row([
+                        ft.Text("+", color=ft.Colors.ORANGE, weight=ft.FontWeight.BOLD),
+                        ft.Text(call, color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None),
+                    ], spacing=2)
+            else:
+                # Not a LoTW user
+                call_display = ft.Text(call, color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None)
+        
+           # Create row with amber background if needed
             row = ft.DataRow(
                 cells=[
                     ft.DataCell(ft.Text(s.get("time", ""), color=ft.Colors.BLACK if needed else None)),
                     ft.DataCell(ft.Text(s.get("band", ""), color=ft.Colors.BLACK if needed else None)),
                     ft.DataCell(ft.Text(s.get("freq", ""), color=ft.Colors.BLACK if needed else None)),
-                    ft.DataCell(ft.Text(s.get("call", ""), color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None)),
+                    ft.DataCell(call_display),
                     ft.DataCell(ft.Text(s.get("dxcc", ""), color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None)),
                     ft.DataCell(ft.Text(s.get("grid", ""), color=ft.Colors.BLACK if needed else None)),
                     ft.DataCell(ft.Text(s.get("spotter", ""), color=ft.Colors.BLACK if needed else None)),
                     ft.DataCell(ft.Text(s.get("comment", ""), color=ft.Colors.BLACK if needed else None)),
                 ],
-                color=ft.Colors.AMBER_200 if needed else None,  # Amber background - much better contrast
-)
+                color=ft.Colors.AMBER_200 if needed else None,
+            )
             rows.append(row)
-            
-            #row = ft.DataRow(
-            #    cells=[
-            #        ft.DataCell(ft.Text(s.get("time", ""))),
-            #        ft.DataCell(ft.Text(s.get("band", ""))),
-            #        ft.DataCell(ft.Text(s.get("freq", ""))),
-            #        ft.DataCell(ft.Text(s.get("call", ""))),
-            #        ft.DataCell(ft.Text(s.get("dxcc", ""))),
-            #        ft.DataCell(ft.Text(s.get("grid", ""))),
-            #        ft.DataCell(ft.Text(s.get("spotter", ""))),
-            #        ft.DataCell(ft.Text(s.get("comment", ""))),
-            #    ],
-            #    color=ft.Colors.AMBER_200 if needed else None,  # amber background for needed spots
-            #)
-            #rows.append(row)
-        
+    
         self.table.rows = rows
         try:
             self.table.update()
         except:
-            pass  # Control not yet added to page
+            pass
+ 

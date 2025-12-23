@@ -10,9 +10,15 @@ from backend.solar import fetch_solar_data, get_solar_data
 from frontend.components.status_bar import build_status_bar
 from frontend.components.live_spot_table import LiveSpotTable
 from frontend.components.settings_tab import SettingsTab
+from frontend.components.challenge_table import ChallengeTable
 
 from backend.cluster_async import start_connection
 from backend.config import get_user_grid, get_auto_connect
+
+from backend.dxcc_challenge import get_stats
+from backend.dxcc_lookup import get_country_from_prefix
+import json
+from pathlib import Path
 
 
 class MainUI(ft.Column):
@@ -21,7 +27,8 @@ class MainUI(ft.Column):
     def __init__(self, page: ft.Page):
         super().__init__(expand=True)
         self.page = page
-        self.connection_task = None  # ADD THIS LINE
+        self.connection_task = None
+        self.solar_timer_task = None 
 
         self.blocked_prefixes: set[str] = set()
         self.recent_spot_times: list[float] = []
@@ -42,7 +49,7 @@ class MainUI(ft.Column):
 
         # spot table
         self.table = LiveSpotTable()
-
+        
         # Band selection - checkboxes for multi-select (RIGHT SIDE PANEL)
         self.band_checkboxes = {}
         bands = ["160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"]
@@ -176,6 +183,8 @@ class MainUI(ft.Column):
             on_settings_changed=self._on_settings_changed,
             initial_connection_state=get_auto_connect()
         )
+        
+        challenge_tab_content = ChallengeTable()
 
         # Create tabs
         self.tabs = ft.Tabs(
@@ -186,6 +195,11 @@ class MainUI(ft.Column):
                     text="Live Spots",
                     icon=ft.Icons.RADAR,
                     content=spots_content,
+                ),
+                ft.Tab(
+                    text="Challenge",
+                    icon=ft.Icons.EMOJI_EVENTS,  # Trophy icon
+                    content=challenge_tab_content,
                 ),
                 ft.Tab(
                     text="Settings",
@@ -204,6 +218,9 @@ class MainUI(ft.Column):
         # start spot rate timer
         self.page.run_task(self._spot_rate_timer)
         
+        # Initialize LoTW user data
+        self.page.run_task(self._init_lotw_data)
+        
         # Start cluster connection if auto-connect is enabled
         # Do this LAST, after UI is fully built
         #if get_auto_connect():
@@ -216,6 +233,16 @@ class MainUI(ft.Column):
         if get_auto_connect():
             self.connection_task = self.page.run_task(start_connection)
 
+    async def _init_lotw_data(self):
+        """Download LoTW user data if needed"""  
+        await asyncio.sleep(5)  # Wait for app to fully load
+        try:
+            from backend.lotw_users import refresh_if_needed
+            refresh_if_needed()  # Downloads if cache old or missing
+        except Exception as e:
+            print(f"LoTW initialization failed: {e}")
+                
+             
     # ------------------------------------------------------------
     # BAND CHECKBOX HANDLERS
     # ------------------------------------------------------------
@@ -389,6 +416,12 @@ class MainUI(ft.Column):
         if mtype == "status":
             self.set_status(msg.get("data", ""))
             return
+            
+        if mtype == "solar_update":
+            # Update solar display from cluster data
+            data = msg.get("data", {})
+            self.set_solar(data.get("sfi", "—"), data.get("k", "—"), data.get("a", "—"))
+            return
 
         if mtype == "spot":
             spot = msg.get("data", {})
@@ -453,15 +486,32 @@ class MainUI(ft.Column):
         fetch_solar_data()
         self._update_solar_display()
         
-        # Start periodic updates (every 15 minutes)
-        self.page.run_task(self._solar_update_timer)
+        # Force immediate update on startup
+        print(f"Solar data loaded: SFI={get_solar_data()['sfi']}, K={get_solar_data()['k']}, A={get_solar_data()['a']}")
+     
+        # Start periodic updates (store task to prevent garbage collection)
+        self.solar_timer_task = self.page.run_task(self._solar_update_timer)
     
+        
     async def _solar_update_timer(self):
-        """Update solar data every 15 minutes"""
+        """Update solar data every hour at the top of the hour"""
         while True:
-            await asyncio.sleep(900)  # 15 minutes
+            # Calculate sleep time to next hour
+            import datetime
+            now = datetime.datetime.now(datetime.UTC)
+            next_hour = now.replace(minute=0, second=0, microsecond=0) + datetime.timedelta(hours=1)
+            sleep_seconds = (next_hour - now).total_seconds()
+        
+            await asyncio.sleep(sleep_seconds)
             fetch_solar_data()
             self._update_solar_display()
+    
+    #async def _solar_update_timer(self):
+    #    """Update solar data every 15 minutes"""
+    #    while True:
+    #        await asyncio.sleep(900)  # 15 minutes
+    #        fetch_solar_data()
+    #        self._update_solar_display()
     
     def _update_solar_display(self):
         """Update solar data in status bar"""
