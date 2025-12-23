@@ -1,164 +1,239 @@
-# settings_tab.py - Settings tab UI component
+# settings_tab.py - Settings configuration with cluster controls
 import flet as ft
-from backend.config import get_user_callsign, get_user_grid, set_user_settings
+import asyncio
+from backend.config import (
+    get_user_callsign, get_user_grid, set_user_settings,
+    get_cluster_servers, get_current_server, set_current_server,
+    get_auto_connect, set_auto_connect
+)
 from backend.grid_utils import validate_grid
+from backend.cluster_async import start_connection, stop_connection
 
 
-class SettingsTab(ft.Container):
-    """Settings tab for user configuration"""
+class SettingsTab(ft.Column):
+    """Settings tab for user configuration and cluster controls"""
     
-    def __init__(self, page: ft.Page, on_settings_changed=None):
+    def __init__(self, page, on_settings_changed, initial_connection_state=False):
         super().__init__()
         self.page = page
         self.on_settings_changed = on_settings_changed
+        self.is_connected = initial_connection_state  # Set based on auto-connect
         
-        # Load current settings
-        current_callsign = get_user_callsign()
-        current_grid = get_user_grid()
-        
-        # Callsign input
+        # User settings section
         self.callsign_field = ft.TextField(
             label="Callsign",
             hint_text="e.g., N4LR or N4LR-14",
-            value=current_callsign,
+            value=get_user_callsign(),
             width=200,
-            on_change=self._validate_inputs,
         )
         
-        # Grid square input
         self.grid_field = ft.TextField(
             label="Grid Square",
-            hint_text="e.g., EM50 or EM50vb",
-            value=current_grid,
-            width=200,
-            on_change=self._validate_inputs,
-            capitalization=ft.TextCapitalization.CHARACTERS,
+            hint_text="e.g., EM50",
+            value=get_user_grid(),
+            width=150,
+            on_change=self._validate_grid_input,
         )
         
-        # Validation message
-        self.validation_text = ft.Text(
-            "",
-            color=ft.Colors.RED,
+        self.grid_help = ft.Text(
+            "Enter your 4 or 6-character Maidenhead grid square",
             size=12,
+            color=ft.Colors.BLUE_GREY_400,
         )
         
-        # Save button
         self.save_button = ft.ElevatedButton(
             text="Save Settings",
             on_click=self._save_settings,
-            disabled=False,
         )
         
-        # Status message
-        self.status_text = ft.Text(
-            "",
-            color=ft.Colors.GREEN,
-            size=12,
+        # Cluster server controls section
+        servers = get_cluster_servers()
+        current = get_current_server()
+        
+        self.server_dropdown = ft.Dropdown(
+            label="Cluster Server",
+            options=[ft.dropdown.Option(s) for s in servers],
+            value=current,
+            width=300,
+            on_change=self._server_changed,
         )
         
-        # Help text
-        help_text = ft.Container(
-            content=ft.Column([
-                ft.Text("Callsign Settings", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.WHITE),
-                ft.Text("Your callsign is used when logging into the cluster.", color=ft.Colors.WHITE70),
-                ft.Text("You can append a number suffix (e.g., N4LR-14) to use different filter profiles.", color=ft.Colors.WHITE70),
-                ft.Text("Note: Only numbers are allowed after the dash, not letters.", italic=True, size=11, color=ft.Colors.AMBER_200),
-                ft.Divider(height=20),
-                ft.Text("Grid Square Settings", weight=ft.FontWeight.BOLD, size=16, color=ft.Colors.WHITE),
-                ft.Text("Your grid square is used to calculate sunrise/sunset times.", color=ft.Colors.WHITE70),
-                ft.Text("Enter a 4-character (EM50) or 6-character (EM50vb) Maidenhead grid.", color=ft.Colors.WHITE70),
-                ft.Text("You can find your grid at: https://www.levinecentral.com/ham/grid_square.php", 
-                       italic=True, size=11, color=ft.Colors.BLUE_200),
-            ], spacing=5),
-            padding=20,
-            bgcolor=ft.Colors.BLUE_GREY_800,
-            border_radius=10,
-            border=ft.border.all(1, ft.Colors.BLUE_GREY_600),
+        self.connect_button = ft.ElevatedButton(
+            text="Disconnect" if initial_connection_state else "Connect",
+            icon=ft.Icons.LINK_OFF if initial_connection_state else ft.Icons.LINK,
+            on_click=self._toggle_connection,
         )
         
-        # Layout
-        self.content = ft.Column([
-            ft.Container(height=20),
+        self.auto_connect_checkbox = ft.Checkbox(
+            label="Auto-connect on startup",
+            value=get_auto_connect(),
+            on_change=self._auto_connect_changed,
+        )
+        
+        # Build layout
+        self.controls = [
+            ft.Text("User Settings", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
             ft.Row([
                 ft.Column([
                     self.callsign_field,
-                    ft.Container(height=10),
-                    self.grid_field,
-                    ft.Container(height=10),
-                    self.validation_text,
-                    self.save_button,
-                    self.status_text,
-                ], spacing=10),
+                    ft.Text(
+                        "Use callsign with suffix (e.g., N4LR-14) for separate filter profiles",
+                        size=12,
+                        color=ft.Colors.BLUE_GREY_400,
+                    ),
+                ]),
                 ft.Container(width=40),
-                help_text,
+                ft.Column([
+                    self.grid_field,
+                    self.grid_help,
+                ]),
             ]),
-        ], expand=True)
+            
+            ft.Container(height=20),
+            self.save_button,
+            
+            ft.Container(height=40),
+            ft.Text("Cluster Connection", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Row([
+                self.server_dropdown,
+                self.connect_button,
+            ], spacing=20),
+            
+            self.auto_connect_checkbox,
+            
+            ft.Container(height=20),
+            ft.Text(
+                "Note: Changing server will disconnect and reconnect",
+                size=12,
+                color=ft.Colors.ORANGE_400,
+            ),
+        ]
         
-        self.expand = True
-        self.padding = 20
+        self.spacing = 10
+        self.scroll = ft.ScrollMode.AUTO
     
-    def _validate_inputs(self, e=None):
-        """Validate callsign and grid inputs"""
-        callsign = self.callsign_field.value.strip()
+    def _validate_grid_input(self, e):
+        """Validate grid square as user types"""
         grid = self.grid_field.value.strip().upper()
-        
-        errors = []
+        if grid and not validate_grid(grid):
+            self.grid_help.value = "Invalid grid square format"
+            self.grid_help.color = ft.Colors.RED_400
+        else:
+            self.grid_help.value = "Enter your 4 or 6-character Maidenhead grid square"
+            self.grid_help.color = ft.Colors.BLUE_GREY_400
+        self.grid_help.update()
+    
+    def _save_settings(self, e):
+        """Save user settings"""
+        callsign = self.callsign_field.value.strip().upper()
+        grid = self.grid_field.value.strip().upper()
         
         # Validate callsign
         if not callsign:
-            errors.append("Callsign is required")
-        elif "-" in callsign:
-            # Check suffix format
-            parts = callsign.split("-")
-            if len(parts) != 2:
-                errors.append("Callsign can only have one dash")
-            elif not parts[1].isdigit():
-                errors.append("Suffix after dash must be a number (e.g., N4LR-14)")
+            self._show_error("Callsign cannot be empty")
+            return
+        
+        # Validate callsign suffix if present
+        if '-' in callsign:
+            suffix = callsign.split('-')[1]
+            if not suffix.isdigit():
+                self._show_error("Callsign suffix must be numeric (e.g., N4LR-14)")
+                return
         
         # Validate grid
         if not grid:
-            errors.append("Grid square is required")
-        else:
-            valid, msg = validate_grid(grid)
-            if not valid:
-                errors.append(f"Grid: {msg}")
+            self._show_error("Grid square cannot be empty")
+            return
         
-        # Update validation display
-        if errors:
-            self.validation_text.value = " | ".join(errors)
-            self.validation_text.color = ft.Colors.RED
-            self.save_button.disabled = True
-        else:
-            self.validation_text.value = "✓ Valid"
-            self.validation_text.color = ft.Colors.GREEN
-            self.save_button.disabled = False
-        
-        self.validation_text.update()
-        self.save_button.update()
-    
-    def _save_settings(self, e):
-        """Save settings to config file"""
-        callsign = self.callsign_field.value.strip()
-        grid = self.grid_field.value.strip().upper()
+        if not validate_grid(grid):
+            self._show_error("Invalid grid square format")
+            return
         
         # Save to config
         set_user_settings(callsign, grid)
         
-        # Show success message
-        self.status_text.value = "✓ Settings saved successfully!"
-        self.status_text.color = ft.Colors.GREEN
-        self.status_text.update()
-        
-        # Notify parent if callback provided
+        # Notify parent
         if self.on_settings_changed:
             self.on_settings_changed(callsign, grid)
+    
+    def _server_changed(self, e):
+        """Handle server selection change"""
+        new_server = self.server_dropdown.value
+        set_current_server(new_server)
         
-        # Clear success message after 3 seconds
-        def clear_status():
-            import time
-            time.sleep(3)
-            self.status_text.value = ""
-            self.status_text.update()
+        # If currently connected, reconnect to new server
+        if self.is_connected:
+            self._reconnect_to_server(new_server)
+    
+    def _reconnect_to_server(self, server_str):
+        """Disconnect and reconnect to new server"""
+        parts = server_str.split(':')
+        host = parts[0]
+        port = int(parts[1]) if len(parts) > 1 else 23
         
-        import threading
-        threading.Thread(target=clear_status, daemon=True).start()
+        # Stop current connection
+        stop_connection()
+        
+        # Start new connection after a delay
+        async def delayed_reconnect():
+            await asyncio.sleep(1)
+            return start_connection(host, port)
+        
+        self.page.run_task(delayed_reconnect)
+    
+    def _toggle_connection(self, e):
+        """Toggle cluster connection"""
+        if self.is_connected:
+            # Disconnect
+            stop_connection()
+            self.is_connected = False
+            self.connect_button.text = "Connect"
+            self.connect_button.icon = ft.Icons.LINK
+            self.connect_button.update()
+        else:
+            # Connect
+            server_str = self.server_dropdown.value
+            parts = server_str.split(':')
+            host = parts[0]
+            port = int(parts[1]) if len(parts) > 1 else 23
+            
+            # Use page.run_task to start connection
+            async def connect_task():
+                await start_connection(host, port)
+            
+            self.page.run_task(connect_task)
+            self.is_connected = True
+            self.connect_button.text = "Disconnect"
+            self.connect_button.icon = ft.Icons.LINK_OFF
+            self.connect_button.update()
+    
+    def _auto_connect_changed(self, e):
+        """Handle auto-connect checkbox change"""
+        set_auto_connect(self.auto_connect_checkbox.value)
+    
+    def _show_error(self, message):
+        """Show error snackbar"""
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text(message),
+            bgcolor=ft.Colors.RED_400,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+    
+    def set_connection_state(self, connected: bool):
+        """Update UI based on connection state (called from main UI)"""
+        self.is_connected = connected
+        if connected:
+            self.connect_button.text = "Disconnect"
+            self.connect_button.icon = ft.Icons.LINK_OFF
+        else:
+            self.connect_button.text = "Connect"
+            self.connect_button.icon = ft.Icons.LINK
+        try:
+            self.connect_button.update()
+        except:
+            pass

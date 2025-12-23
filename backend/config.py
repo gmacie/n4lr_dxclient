@@ -19,7 +19,7 @@ def load_config():
     else:
         # Create default config
         config['user'] = {
-            'callsign': 'N4LR',
+            'callsign': 'N4LR-16',
             'grid': 'EM50'
         }
         config['cluster'] = {
@@ -45,6 +45,38 @@ def get_user_grid():
     """Get user's grid square from config"""
     config = load_config()
     return config.get('user', 'grid', fallback='EM50')
+
+def get_cluster_servers():
+    """Get list of cluster servers from config"""
+    config = load_config()
+    servers_str = config.get('cluster', 'servers', fallback='www.ve7cc.net:23,www.dxspots.com:7300')
+    return [s.strip() for s in servers_str.split(',')]
+
+def get_current_server():
+    """Get currently selected cluster server"""
+    config = load_config()
+    return config.get('cluster', 'current_server', fallback='www.ve7cc.net:23')
+
+def set_current_server(server):
+    """Set the current cluster server"""
+    config = load_config()
+    if 'cluster' not in config:
+        config['cluster'] = {}
+    config['cluster']['current_server'] = server
+    save_config(config)
+
+def get_auto_connect():
+    """Get auto-connect setting"""
+    config = load_config()
+    return config.getboolean('cluster', 'auto_connect', fallback=True)
+
+def set_auto_connect(value):
+    """Set auto-connect setting"""
+    config = load_config()
+    if 'cluster' not in config:
+        config['cluster'] = {}
+    config['cluster']['auto_connect'] = 'yes' if value else 'no'
+    save_config(config)
 
 def set_user_callsign(callsign):
     """Set user's callsign in config"""

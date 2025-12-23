@@ -1,38 +1,35 @@
+#!/usr/bin/env python3
+"""
+N4LR DX Client - Main entry point
+"""
+
 import flet as ft
+import sys
+
 from backend.message_bus import init_pubsub
-from backend.cluster_async import run_cluster_monitor
+
+# Add src folder to path so we can import app modules
+sys.path.insert(0, ".")
+
 from frontend.main_ui import MainUI
+from backend.cluster_async import start_connection
+from backend.config import get_auto_connect
 
 
 def main(page: ft.Page):
-
-    # Initialize pubsub
-    init_pubsub(page)
-
-    # Make dialog available for prefix filters
-    page.dialog = ft.AlertDialog(modal=True)
-
-    # Drawer must exist before UI loads
-    page.drawer = ft.NavigationDrawer(controls=[])
-
-    page.theme_mode = ft.ThemeMode.LIGHT
-
-    # --------------------------------------------------
-    # Start backend monitor as a MANAGED background task
-    # --------------------------------------------------
-    # IMPORTANT: pass function, NOT coroutine!
-    task = page.run_task(run_cluster_monitor)
-
-    # Cancel background task when session closes
-    def on_disconnect(e):
-        try:
-            task.cancel()
-        except:
-            pass
-
-    page.on_disconnect = on_disconnect
-
-    # Build UI
+    """Main entry point for Flet app"""
+    
+    # Configure page
+    page.title = "N4LR DX Client"
+    page.window.width = 1400
+    page.window.height = 900
+    page.theme_mode = ft.ThemeMode.DARK
+    page.padding = 10
+    
+    # Initialize message bus FIRST
+    init_pubsub(page)  # <-- DO YOU HAVE THIS LINE?
+    
+    # Create main UI (it will auto-connect if configured)
     ui = MainUI(page)
     page.add(ui)
 

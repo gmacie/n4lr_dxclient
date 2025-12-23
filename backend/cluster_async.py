@@ -1,6 +1,7 @@
-# cluster_async.py  12/20/2025
+# cluster_async.py  12/21/2025 - Added connect/disconnect control
 import asyncio
-from backend.message_bus import publish, register_callback
+from backend.message_bus import publish
+from backend.config import get_user_callsign, get_current_server
 
 # CC11 field indices
 spotType           = 0
@@ -15,35 +16,7 @@ spotDXCountry      = 16
 spotDXGrid         = 18
 spotSpotterState   = 15
 
-# CC11^Freq^DX^date^time^spotter^comments^hops^rx via node^origin node^spotter itu^spotter cq^dx itu^dx cq^spotter state^
-# dx state^spotter cty^dx cty^spotter grid^dx grid^^spot type^Spotter IP Address^timestamp
-
-#  0  CC11^
-#  1  DX Frequency^  YES
-#  2  DX station's callsign^  YES
-#  3  Date^  YES
-#  4  Time^  YES
-#  5  Spotter Callsign^
-#  6  Comments^  YES
-#  7  Hops^
-#  8  RX via node^  NO
-#  9  Origin node^  NO
-#  10 Spotter ITU zone^  NO
-#  11 Spotter CQ zone^  NO
-#  12 DX station's ITU zone^  NO
-#  13 DX station's CQ zone^  YES
-#  14 Spotter's state^
-#  15 DX station's state^  YES
-#  16 Spotter DXCC entity^
-#  17 DX station's DXCC entity^  YES
-#  18 Spotter's grid^  YES
-#  19 DX station's grid^  YES
-#  20 spot type^
-#  21 Spotter IP Address^
-#  22 timestamp
-
 # Simple ARRL band plan in kHz
-
 ARRL_BAND_PLAN = [
     (1800,  2000,  "160m"),
     (3500,  4000,  "80m"),
@@ -68,52 +41,76 @@ def determine_band(freq_value):
             return name
     return "?"
 
-HOST = "www.ve7cc.net"
-PORT = 23
-
 # Global queue for commands from UI
 command_queue = asyncio.Queue()
 
-async def run_cluster_monitor():
+# Global connection control
+_should_disconnect = False
+_connection_task = None
+
+
+async def run_cluster_monitor(server_host: str = None, server_port: int = None):
     """
-    Main VE7CC cluster monitor loop.
-    Includes clean shutdown support to avoid pending-task warnings.
+    Main VE7CC cluster monitor loop with connect/disconnect support.
     """
-    # Register callback to receive commands from UI
-    def on_command(msg: dict):
-        if msg.get("type") == "cluster_command":
-            cmd = msg.get("data", "")
-            print(f"DEBUG BACKEND: Received command: '{cmd}'")
-            if cmd:
-                command_queue.put_nowait(cmd)
+    global _should_disconnect
     
-    register_callback(on_command)
+    print(f"DEBUG: run_cluster_monitor called with host={server_host}, port={server_port}")  # ADD THIS LINE
+    
+    # Get server from config if not specified
+    if not server_host:
+        server_str = get_current_server()
+        print(f"DEBUG: Got server from config: {server_str}")  # ADD THIS LINE
+        parts = server_str.split(':')
+        server_host = parts[0]
+        server_port = int(parts[1]) if len(parts) > 1 else 23
+    
+    callsign = get_user_callsign()
+    print(f"DEBUG: Using callsign: {callsign}")  # ADD THIS
+    _should_disconnect = False
     
     try:
-        while True:
+        while not _should_disconnect:
             try:
-                publish({"type": "status", "data": "Connecting to cluster..."})
-                reader, writer = await asyncio.open_connection(HOST, PORT)
-                publish({"type": "status", "data": "Cluster connected"})
+                print(f"DEBUG: Attempting connection to {server_host}:{server_port}")  # ADD THIS
+                publish({"type": "status", "data": f"Connecting to {server_host}:{server_port}..."})
+                reader, writer = await asyncio.open_connection(server_host, server_port)
+                print(f"DEBUG: Connected! Sending login...")  # ADD THIS
+                publish({"type": "status", "data": f"Connected to {server_host}"})
                 
                 # login commands
-                writer.write(b"N4LR-17\n")
+                print(f"DEBUG: Sending callsign: {callsign}")
+                writer.write(f"{callsign}\n".encode())
+                await writer.drain()
+                
+                # Read the welcome/prompt
+                for i in range(5):
+                    line = await reader.readline()
+                    print(f"DEBUG: Server response {i}: {line.decode(errors='ignore').strip()}")
+                
+                print(f"DEBUG: Sending cluster commands...")
                 writer.write(b"set/nofilter\n")
                 writer.write(b"set/ve7cc\n")
                 writer.write(b"set/skimmer\n")
-                writer.write(b"set/nodedupe\n")
+                #writer.write(b"set/nodedup\n")
                 await writer.drain()
+                print(f"DEBUG: Login commands sent, waiting for spots...")
                 
                 # Start task to handle commands from UI
                 command_task = asyncio.create_task(handle_commands(writer))
                 
-                while True:
+                while not _should_disconnect:
                     line = await reader.readline()
                     if not line:
                         command_task.cancel()
                         raise ConnectionError("Cluster disconnected")
                     
                     s = line.decode(errors="ignore").strip()
+                    
+                    if s:
+                        pass
+                        #print(f"DEBUG: Received: {s[:100]}")
+                        
                     if not s:
                         continue
                     
@@ -138,19 +135,37 @@ async def run_cluster_monitor():
                         "comment": parts[spotComment],
                         "time": parts[spotZulu],
                     }
+                    #print(f"DEBUG: Publishing spot: {spot['call']} on {spot['band']}")  # ADD THI
                     publish({"type": "spot", "data": spot})
+                
+                # Clean disconnect
+                command_task.cancel()
+                writer.close()
+                await writer.wait_closed()
+                publish({"type": "status", "data": "Disconnected"})
+                break  # Exit loop on manual disconnect
                     
+            except asyncio.CancelledError:
+                # Task was cancelled - clean exit
+                publish({"type": "status", "data": "Disconnected"})
+                return
+                
             except Exception as e:
-                publish({
-                    "type": "status",
-                    "data": f"Cluster lost — retrying in 5s... ({e})"
-                })
-                await asyncio.sleep(5)
+                if _should_disconnect:
+                    publish({"type": "status", "data": "Disconnected"})
+                    break
+                else:
+                    publish({
+                        "type": "status",
+                        "data": f"Connection lost — retrying in 5s... ({e})"
+                    })
+                    await asyncio.sleep(5)
                 
     except asyncio.CancelledError:
         # clean exit — stop raising warnings
         publish({"type": "status", "data": "Backend stopped."})
         return
+
 
 async def handle_commands(writer):
     """Handle commands from the UI and send to cluster"""
@@ -165,3 +180,27 @@ async def handle_commands(writer):
             publish({"type": "status", "data": f"Sent: {cmd.strip()}"})
     except asyncio.CancelledError:
         pass
+
+
+async def start_connection(server_host: str = None, server_port: int = None):
+    """Start cluster connection (call from UI using page.run_task)"""
+    global _connection_task, _should_disconnect
+    
+    _should_disconnect = False
+    
+    # Cancel existing connection if any
+    if _connection_task and not _connection_task.done():
+        _connection_task.cancel()
+    
+    # Start the monitor
+    await run_cluster_monitor(server_host, server_port)
+
+
+def stop_connection():
+    """Stop cluster connection (call from UI)"""
+    global _should_disconnect, _connection_task
+    
+    _should_disconnect = True
+    
+    if _connection_task and not _connection_task.done():
+        _connection_task.cancel()

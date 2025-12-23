@@ -126,21 +126,39 @@ class LiveSpotTable(ft.Column):
                 except:
                     pass
             
+            
+            
             # Create row with red background if needed
+            # Create row with amber background if needed (better contrast than red)
             row = ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(s.get("time", ""))),
-                    ft.DataCell(ft.Text(s.get("band", ""))),
-                    ft.DataCell(ft.Text(s.get("freq", ""))),
-                    ft.DataCell(ft.Text(s.get("call", ""))),
-                    ft.DataCell(ft.Text(s.get("dxcc", ""))),
-                    ft.DataCell(ft.Text(s.get("grid", ""))),
-                    ft.DataCell(ft.Text(s.get("spotter", ""))),
-                    ft.DataCell(ft.Text(s.get("comment", ""))),
+                    ft.DataCell(ft.Text(s.get("time", ""), color=ft.Colors.BLACK if needed else None)),
+                    ft.DataCell(ft.Text(s.get("band", ""), color=ft.Colors.BLACK if needed else None)),
+                    ft.DataCell(ft.Text(s.get("freq", ""), color=ft.Colors.BLACK if needed else None)),
+                    ft.DataCell(ft.Text(s.get("call", ""), color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None)),
+                    ft.DataCell(ft.Text(s.get("dxcc", ""), color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None)),
+                    ft.DataCell(ft.Text(s.get("grid", ""), color=ft.Colors.BLACK if needed else None)),
+                    ft.DataCell(ft.Text(s.get("spotter", ""), color=ft.Colors.BLACK if needed else None)),
+                    ft.DataCell(ft.Text(s.get("comment", ""), color=ft.Colors.BLACK if needed else None)),
                 ],
-                color=ft.Colors.RED_100 if needed else None,  # Light red background for needed spots
-            )
+                color=ft.Colors.AMBER_200 if needed else None,  # Amber background - much better contrast
+)
             rows.append(row)
+            
+            #row = ft.DataRow(
+            #    cells=[
+            #        ft.DataCell(ft.Text(s.get("time", ""))),
+            #        ft.DataCell(ft.Text(s.get("band", ""))),
+            #        ft.DataCell(ft.Text(s.get("freq", ""))),
+            #        ft.DataCell(ft.Text(s.get("call", ""))),
+            #        ft.DataCell(ft.Text(s.get("dxcc", ""))),
+            #        ft.DataCell(ft.Text(s.get("grid", ""))),
+            #        ft.DataCell(ft.Text(s.get("spotter", ""))),
+            #        ft.DataCell(ft.Text(s.get("comment", ""))),
+            #    ],
+            #    color=ft.Colors.AMBER_200 if needed else None,  # amber background for needed spots
+            #)
+            #rows.append(row)
         
         self.table.rows = rows
         try:

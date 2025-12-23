@@ -11,6 +11,9 @@ from frontend.components.status_bar import build_status_bar
 from frontend.components.live_spot_table import LiveSpotTable
 from frontend.components.settings_tab import SettingsTab
 
+from backend.cluster_async import start_connection
+from backend.config import get_user_grid, get_auto_connect
+
 
 class MainUI(ft.Column):
     """Main N4LR DX monitor UI with tabs."""
@@ -18,6 +21,7 @@ class MainUI(ft.Column):
     def __init__(self, page: ft.Page):
         super().__init__(expand=True)
         self.page = page
+        self.connection_task = None  # ADD THIS LINE
 
         self.blocked_prefixes: set[str] = set()
         self.recent_spot_times: list[float] = []
@@ -80,7 +84,7 @@ class MainUI(ft.Column):
             ),
             width=120,
             padding=10,
-            bgcolor=ft.Colors.BLUE_GREY_100,
+            bgcolor=ft.Colors.BLUE_GREY_900,
             border_radius=5,
         )
 
@@ -169,7 +173,8 @@ class MainUI(ft.Column):
         # Build Settings tab
         settings_tab_content = SettingsTab(
             page=self.page,
-            on_settings_changed=self._on_settings_changed
+            on_settings_changed=self._on_settings_changed,
+            initial_connection_state=get_auto_connect()
         )
 
         # Create tabs
@@ -198,6 +203,18 @@ class MainUI(ft.Column):
 
         # start spot rate timer
         self.page.run_task(self._spot_rate_timer)
+        
+        # Start cluster connection if auto-connect is enabled
+        # Do this LAST, after UI is fully built
+        #if get_auto_connect():
+        #    async def delayed_auto_connect():
+        #        await asyncio.sleep(0.5)  # Give UI time to render
+        #        await start_connection()
+        #    self.page.run_task(delayed_auto_connect)      
+        
+        # Start cluster connection if auto-connect is enabled
+        if get_auto_connect():
+            self.connection_task = self.page.run_task(start_connection)
 
     # ------------------------------------------------------------
     # BAND CHECKBOX HANDLERS
@@ -363,6 +380,7 @@ class MainUI(ft.Column):
     # BACKEND MESSAGE HANDLER
     # ------------------------------------------------------------
     def _on_backend_msg(self, msg: dict):
+        #print(f"DEBUG UI: Received message: {msg}")  # ADD THIS LINE
         if not isinstance(msg, dict):
             return
 
