@@ -11,6 +11,7 @@ from frontend.components.status_bar import build_status_bar
 from frontend.components.live_spot_table import LiveSpotTable
 from frontend.components.settings_tab import SettingsTab
 from frontend.components.challenge_table import ChallengeTable
+from frontend.components.band_schedule_dialog import BandScheduleDialog
 
 from backend.cluster_async import start_connection
 from backend.config import get_user_grid, get_auto_connect
@@ -41,8 +42,8 @@ class MainUI(ft.Column):
 
         # NOW hook pubsub callback (after status bar exists)
         register_callback(self._on_backend_msg)
-        if self.page.pubsub:
-            self.page.pubsub.subscribe(self._on_backend_msg)
+        #if self.page.pubsub:
+        #    self.page.pubsub.subscribe(self._on_backend_msg)
         
         # Fetch solar data on startup
         self.page.run_task(self._fetch_solar_data_once)
@@ -68,11 +69,22 @@ class MainUI(ft.Column):
             on_change=self._none_bands_changed,
         )
         
-        # Individual band checkboxes
+        # Band schedule button
+        self.schedule_button = ft.IconButton(
+            icon=ft.Icons.SCHEDULE,
+            tooltip="Band Time Filters",
+            on_click=self._show_band_schedule,
+            icon_size=20,
+        )
+        
         band_checkbox_controls = [
-            ft.Text("Bands:", weight=ft.FontWeight.BOLD, size=14),
+            ft.Row([
+                ft.Text("Bands:", weight=ft.FontWeight.BOLD, size=14),
+                self.schedule_button,
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             ft.Row([self.all_bands_checkbox, self.none_bands_checkbox], spacing=5),
         ]
+        
         for band in bands:
             cb = ft.Checkbox(
                 label=band,
@@ -120,6 +132,20 @@ class MainUI(ft.Column):
             tooltip="Clear all server filters",
             on_click=self._quick_reset_filters,
         )
+        
+        # LoTW Only toggle button
+        self.lotw_only_button = ft.ElevatedButton(
+            text="LoTW Only",
+            tooltip="Show only LoTW users",
+            on_click=self._toggle_lotw_only,
+        )
+        
+        # Needed Only toggle button
+        self.needed_only_button = ft.ElevatedButton(
+            text="Needed Only",
+            tooltip="Show only needed entities",
+            on_click=self._toggle_needed_only,
+        )
 
         other_filters_row = ft.Row(
             [
@@ -127,6 +153,8 @@ class MainUI(ft.Column):
                 self.grid_field,
                 self.dxcc_field,
                 self.reject_kve_button,
+                self.lotw_only_button,
+                self.needed_only_button,
                 self.reset_filters_button,
             ],
             spacing=10,
@@ -219,19 +247,16 @@ class MainUI(ft.Column):
         self.page.run_task(self._spot_rate_timer)
         
         # Initialize LoTW user data
-        self.page.run_task(self._init_lotw_data)
-        
-        # Start cluster connection if auto-connect is enabled
-        # Do this LAST, after UI is fully built
-        #if get_auto_connect():
-        #    async def delayed_auto_connect():
-        #        await asyncio.sleep(0.5)  # Give UI time to render
-        #        await start_connection()
-        #    self.page.run_task(delayed_auto_connect)      
+        self.page.run_task(self._init_lotw_data)   
         
         # Start cluster connection if auto-connect is enabled
         if get_auto_connect():
             self.connection_task = self.page.run_task(start_connection)
+            
+    def _show_band_schedule(self, e):
+        """Show band schedule dialog"""
+        dialog = BandScheduleDialog(self.page)
+        dialog.show()
 
     async def _init_lotw_data(self):
         """Download LoTW user data if needed"""  
@@ -300,6 +325,72 @@ class MainUI(ft.Column):
     def _quick_reset_filters(self, e):
         """Quick button to reset all server filters"""
         publish({"type": "cluster_command", "data": "set/nofilter"})
+        
+        # Clear local filters
+        self.grid_field.value = ""
+        self.dxcc_field.value = ""
+        self.table.set_filters(self.table.filter_bands, "", "")
+        
+        # Clear LoTW Only filter
+        self.table.set_lotw_only(False)
+        self.lotw_only_button.bgcolor = None
+        self.lotw_only_button.text = "LoTW Only"
+        try:
+            self.lotw_only_button.update()
+        except:
+            pass
+        
+        # Clear Needed Only filter
+        self.table.set_needed_only(False)
+        self.needed_only_button.bgcolor = None
+        self.needed_only_button.text = "Needed Only"
+        try:
+            self.needed_only_button.update()
+        except:
+            pass
+        
+        # Update UI
+        try:
+            self.grid_field.update()
+            self.dxcc_field.update()
+        except:
+            pass
+    
+    def _toggle_lotw_only(self, e):
+        """Toggle LoTW only filter"""
+        current = self.table.filter_lotw_only
+        new_state = not current
+        self.table.set_lotw_only(new_state)
+        
+        if new_state:
+            self.lotw_only_button.bgcolor = ft.Colors.GREEN_700
+            self.lotw_only_button.text = "LoTW Only ✓"
+        else:
+            self.lotw_only_button.bgcolor = None
+            self.lotw_only_button.text = "LoTW Only"
+        
+        try:
+            self.lotw_only_button.update()
+        except:
+            pass
+    
+    def _toggle_needed_only(self, e):
+        """Toggle needed only filter"""
+        current = self.table.filter_needed_only
+        new_state = not current
+        self.table.set_needed_only(new_state)
+        
+        if new_state:
+            self.needed_only_button.bgcolor = ft.Colors.ORANGE_700
+            self.needed_only_button.text = "Needed Only ✓"
+        else:
+            self.needed_only_button.bgcolor = None
+            self.needed_only_button.text = "Needed Only"
+        
+        try:
+            self.needed_only_button.update()
+        except:
+            pass
         # ------------------------------------------------------------
     
     # SETTINGS CHANGED HANDLER
@@ -424,6 +515,7 @@ class MainUI(ft.Column):
             return
 
         if mtype == "spot":
+            #print(f"DEBUG UI: Received spot: {msg.get('data', {}).get('call', 'UNKNOWN')}")
             spot = msg.get("data", {})
 
             prefix = self._extract_prefix(spot.get("call", ""))
@@ -487,7 +579,7 @@ class MainUI(ft.Column):
         self._update_solar_display()
         
         # Force immediate update on startup
-        print(f"Solar data loaded: SFI={get_solar_data()['sfi']}, K={get_solar_data()['k']}, A={get_solar_data()['a']}")
+        print(f"Solar data loaded: SFI={get_solar_data()['sfi']}, A={get_solar_data()['a']}, K={get_solar_data()['k']}")
      
         # Start periodic updates (store task to prevent garbage collection)
         self.solar_timer_task = self.page.run_task(self._solar_update_timer)
@@ -505,18 +597,11 @@ class MainUI(ft.Column):
             await asyncio.sleep(sleep_seconds)
             fetch_solar_data()
             self._update_solar_display()
-    
-    #async def _solar_update_timer(self):
-    #    """Update solar data every 15 minutes"""
-    #    while True:
-    #        await asyncio.sleep(900)  # 15 minutes
-    #        fetch_solar_data()
-    #        self._update_solar_display()
-    
+       
     def _update_solar_display(self):
         """Update solar data in status bar"""
         data = get_solar_data()
-        self.set_solar(data['sfi'], data['k'], data['a'])
+        self.set_solar(data['sfi'], data['a'], data['k'])
     
     # ------------------------------------------------------------
     # SPOT RATE TIMER

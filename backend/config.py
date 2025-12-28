@@ -19,13 +19,22 @@ def load_config():
     else:
         # Create default config
         config['user'] = {
-            'callsign': 'N4LR-16',
+            'callsign': 'N4LR',
             'grid': 'EM50'
         }
         config['cluster'] = {
             'server': 'www.ve7cc.net',
-            'port': '23'
+            'port': '23',
+            'auto_connect': 'yes'
         }
+        config['display'] = {
+            'needed_spot_minutes': '15'
+        }
+        save_config(config)
+    
+    # Ensure display section exists
+    if 'display' not in config:
+        config['display'] = {'needed_spot_minutes': '15'}
         save_config(config)
     
     return config
@@ -49,7 +58,7 @@ def get_user_grid():
 def get_cluster_servers():
     """Get list of cluster servers from config"""
     config = load_config()
-    servers_str = config.get('cluster', 'servers', fallback='www.ve7cc.net:23,www.dxspots.com:7300')
+    servers_str = config.get('cluster', 'servers', fallback='www.ve7cc.net:23,www.dxspots.com:7300,cluster.ve3eid.com:8300')
     return [s.strip() for s in servers_str.split(',')]
 
 def get_current_server():
@@ -76,6 +85,19 @@ def set_auto_connect(value):
     if 'cluster' not in config:
         config['cluster'] = {}
     config['cluster']['auto_connect'] = 'yes' if value else 'no'
+    save_config(config)
+
+def get_needed_spot_minutes():
+    """Get how long to keep needed spots (in minutes)"""
+    config = load_config()
+    return config.getint('display', 'needed_spot_minutes', fallback=15)
+
+def set_needed_spot_minutes(minutes):
+    """Set how long to keep needed spots (in minutes)"""
+    config = load_config()
+    if 'display' not in config:
+        config['display'] = {}
+    config['display']['needed_spot_minutes'] = str(minutes)
     save_config(config)
 
 def set_user_callsign(callsign):

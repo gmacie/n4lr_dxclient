@@ -2,6 +2,7 @@
 import flet as ft
 from backend.dxcc_challenge import get_stats
 from backend.dxcc_lookup import get_country_from_prefix
+from backend.dxcc_prefixes import get_prefix
 import json
 from pathlib import Path
 
@@ -62,11 +63,11 @@ class ChallengeTable(ft.Column):
         
         total_entities = self.challenge_data["total_entities"]
         total_slots = self.challenge_data["total_slots"]
-        max_slots = total_entities * 9  # 9 HF bands
+        max_slots = total_entities * 11  # 11 bands (160m-6m including 60m)
         
         # Band statistics
         bands_stats = []
-        for band in ["160M", "80M", "40M", "30M", "20M", "17M", "15M", "12M", "10M"]:
+        for band in ["160M", "80M", "60M", "40M", "30M", "20M", "17M", "15M", "12M", "10M", "6M"]:
             count = self.challenge_data["entities_by_band"].get(band, 0)
             pct = (count / total_entities * 100) if total_entities > 0 else 0
             bands_stats.append(f"{band}: {count}/{total_entities} ({pct:.0f}%)")
@@ -82,8 +83,8 @@ class ChallengeTable(ft.Column):
                 ft.Container(height=10),
                 ft.Text("Band Progress:", size=14, weight=ft.FontWeight.BOLD),
                 ft.Row([
-                    ft.Column([ft.Text(s, size=12) for s in bands_stats[:5]]),
-                    ft.Column([ft.Text(s, size=12) for s in bands_stats[5:]]),
+                    ft.Column([ft.Text(s, size=12) for s in bands_stats[:6]]),
+                    ft.Column([ft.Text(s, size=12) for s in bands_stats[6:]]),
                 ], spacing=40),
             ]),
             padding=20,
@@ -99,22 +100,24 @@ class ChallengeTable(ft.Column):
         # Build header row
         columns = [
             ft.DataColumn(ft.Text("Entity", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("DXCC", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(ft.Text("Prefix", weight=ft.FontWeight.BOLD)),
         ]
         
-        bands = ["160M", "80M", "40M", "30M", "20M", "17M", "15M", "12M", "10M"]
+        bands = ["160M", "80M", "60M", "40M", "30M", "20M", "17M", "15M", "12M", "10M", "6M"]
         for band in bands:
             columns.append(ft.DataColumn(ft.Text(band, weight=ft.FontWeight.BOLD)))
         
         # Build data rows
         rows = []
-        entities_sorted = sorted(self.challenge_data["entities"].items(), key=lambda x: x[0])
+        
+        entities_sorted = sorted(self.challenge_data["entities"].items(), key=lambda x: get_prefix(x[0]))
         
         # Load DXCC mapping for country names
         dxcc_mapping = self._load_dxcc_mapping()
         
         for entity_num, bands_worked in entities_sorted:
             country_name = dxcc_mapping.get(str(entity_num), f"Entity {entity_num}")
+            prefix = get_prefix(entity_num)
             
             # Truncate long names
             if len(country_name) > 25:
@@ -122,7 +125,7 @@ class ChallengeTable(ft.Column):
             
             cells = [
                 ft.DataCell(ft.Text(country_name, size=12)),
-                ft.DataCell(ft.Text(entity_num, size=12)),
+                ft.DataCell(ft.Text(prefix, size=12, weight=ft.FontWeight.BOLD)),
             ]
             
             # Add checkmarks for each band

@@ -1,5 +1,6 @@
 import flet as ft
 import time
+from datetime import datetime, timedelta
 
 try:
     from backend.lotw_users import is_lotw_user, get_upload_age_days
@@ -15,18 +16,42 @@ except:
     CHALLENGE_AVAILABLE = False
     print("DXCC Challenge module not available")
 
+try:
+    from backend.config import load_config
+    CONFIG_AVAILABLE = True
+except:
+    CONFIG_AVAILABLE = False
+    print("Config module not available")
+
 
 class LiveSpotTable(ft.Column):
-    """Live DX spot table with basic filters."""
+    """Live DX spot table with basic filters and separate needed spots buffer."""
     
     def __init__(self):
         super().__init__()
-        self.spots: list[dict] = []
+        
+        # Two separate buffers
+        self.regular_spots: list[dict] = []  # Regular spots (100 max)
+        self.needed_spots: list[dict] = []   # Needed spots (kept longer)
+        
         # Initialize with all bands selected by default
         self.filter_bands: list[str] = ["160M", "80M", "60M", "40M", "30M", "20M", "17M", "15M", "12M", "10M", "6M"]
         self.filter_grid: str = ""
         self.filter_dxcc: str = ""
-        self.max_spots: int = 100  # Reduced from 500 for better performance
+        self.filter_lotw_only: bool = False
+        self.filter_needed_only: bool = False
+        
+        # Buffer sizes
+        self.max_regular_spots: int = 100
+        self.needed_spot_minutes: int = 15  # Keep needed spots for 15 minutes
+        
+        # Load needed spot duration from config
+        if CONFIG_AVAILABLE:
+            try:
+                config = load_config()
+                self.needed_spot_minutes = config.getint('display', 'needed_spot_minutes', fallback=15)
+            except:
+                pass
         
         # Batching for performance - rebuild at most every N seconds
         self.last_rebuild_time: float = 0
@@ -59,12 +84,50 @@ class LiveSpotTable(ft.Column):
         self.controls = [self._list_view]
         self.expand = True
     
-    # ---------------------------------------------------
+    def set_needed_spot_duration(self, minutes: int):
+        """Update how long to keep needed spots"""
+        self.needed_spot_minutes = minutes
+        self._clean_old_needed_spots()
+        self._schedule_rebuild()
+    
+    def _clean_old_needed_spots(self):
+        """Remove needed spots older than configured duration"""
+        if not self.needed_spots:
+            return
+        
+        cutoff_time = datetime.now() - timedelta(minutes=self.needed_spot_minutes)
+        
+        # Keep spots that have a timestamp and are newer than cutoff
+        self.needed_spots = [
+            spot for spot in self.needed_spots
+            if spot.get('timestamp') and spot['timestamp'] > cutoff_time
+        ]
+    
     def add_spot(self, spot: dict):
-        """Add spot to list and rebuild if enough time has passed"""
-        self.spots.insert(0, spot)
-        if len(self.spots) > self.max_spots:
-            self.spots = self.spots[: self.max_spots]
+        """Add spot to appropriate buffer and rebuild if enough time has passed"""
+        
+        # Add timestamp for age tracking
+        spot['timestamp'] = datetime.now()
+        
+        # Check if this spot is needed
+        is_spot_needed = False
+        if CHALLENGE_AVAILABLE:
+            try:
+                is_spot_needed = is_needed(spot.get("dxcc", ""), spot.get("band", ""))
+            except:
+                pass
+        
+        # Add to appropriate buffer
+        if is_spot_needed:
+            # Add to needed spots buffer
+            self.needed_spots.insert(0, spot)
+            # Clean old needed spots
+            self._clean_old_needed_spots()
+        else:
+            # Add to regular spots buffer
+            self.regular_spots.insert(0, spot)
+            if len(self.regular_spots) > self.max_regular_spots:
+                self.regular_spots = self.regular_spots[:self.max_regular_spots]
         
         # Check if enough time has passed since last rebuild
         current_time = time.time()
@@ -76,7 +139,6 @@ class LiveSpotTable(ft.Column):
             # Mark that we need a rebuild later
             self.needs_rebuild = True
     
-    # ---------------------------------------------------
     def set_filters(self, bands: list[str], grid: str, dxcc: str):
         """Update filters and rebuild table with current spots"""
         self.filter_bands = [b.upper() for b in bands] if bands else []
@@ -86,21 +148,35 @@ class LiveSpotTable(ft.Column):
         # Rebuild to apply new filters (don't clear - just re-filter existing spots)
         self._rebuild_rows()
     
-    # ---------------------------------------------------
+    def set_lotw_only(self, enabled: bool):
+        """Toggle LoTW only filter"""
+        self.filter_lotw_only = enabled
+        self._schedule_rebuild()
+    
+    def set_needed_only(self, enabled: bool):
+        """Toggle needed only filter"""
+        self.filter_needed_only = enabled
+        self._schedule_rebuild()
+    
+    def _schedule_rebuild(self):
+        """Schedule a rebuild immediately"""
+        self._rebuild_rows()
+    
     def clear_spots(self):
-        """Clear all spots from the table"""
-        self.spots = []
+        """Clear all spots from both buffers"""
+        self.regular_spots = []
+        self.needed_spots = []
         self.table.rows = []
         try:
             self.table.update()
         except:
             pass  # Control not yet added to page
     
-    # ---------------------------------------------------
     def _passes_filters(self, s: dict) -> bool:
         band = str(s.get("band", "")).upper()
         grid = str(s.get("grid", "")).upper()
         dxcc = str(s.get("dxcc", "")).upper()
+        call = str(s.get("call", ""))
         
         # Band filter: if list is empty, show NOTHING; if list has items, show only those bands
         if len(self.filter_bands) == 0:
@@ -115,13 +191,41 @@ class LiveSpotTable(ft.Column):
         if self.filter_dxcc and self.filter_dxcc not in dxcc:
             return False
         
+        # LoTW Only filter
+        if self.filter_lotw_only:
+            if LOTW_AVAILABLE:
+                try:
+                    if not is_lotw_user(call):
+                        return False
+                except:
+                    return False
+            else:
+                return False  # Can't filter if LoTW not available
+        
+        # Needed Only filter
+        if self.filter_needed_only:
+            if CHALLENGE_AVAILABLE:
+                try:
+                    if not is_needed(s.get("dxcc", ""), s.get("band", "")):
+                        return False
+                except:
+                    return False
+            else:
+                return False  # Can't filter if Challenge not available
+        
         return True
     
-    # ---------------------------------------------------
     def _rebuild_rows(self):
+        """Rebuild table rows from both buffers, needed spots first"""
         rows: list[ft.DataRow] = []
-    
-        for s in self.spots:
+        
+        # Clean old needed spots before rebuilding
+        self._clean_old_needed_spots()
+        
+        # Combine both buffers: needed spots first (they're amber), then regular
+        all_spots = self.needed_spots + self.regular_spots
+        
+        for s in all_spots:
             if not self._passes_filters(s):
                 continue
         
@@ -153,7 +257,7 @@ class LiveSpotTable(ft.Column):
                 # Not a LoTW user
                 call_display = ft.Text(call, color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None)
         
-           # Create row with amber background if needed
+            # Create row with amber background if needed
             row = ft.DataRow(
                 cells=[
                     ft.DataCell(ft.Text(s.get("time", ""), color=ft.Colors.BLACK if needed else None)),
@@ -174,4 +278,3 @@ class LiveSpotTable(ft.Column):
             self.table.update()
         except:
             pass
- 

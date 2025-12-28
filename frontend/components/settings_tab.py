@@ -70,6 +70,23 @@ class SettingsTab(ft.Column):
             on_change=self._auto_connect_changed,
         )
         
+        # Display settings section
+        from backend.config import get_needed_spot_minutes
+        self.needed_spot_slider = ft.Slider(
+            min=5,
+            max=60,
+            divisions=11,  # 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60
+            value=get_needed_spot_minutes(),
+            label="{value} min",
+            on_change=self._needed_spot_duration_changed,
+            width=400,
+        )
+        
+        self.needed_spot_label = ft.Text(
+            f"Keep needed (amber) spots visible for: {get_needed_spot_minutes()} minutes",
+            size=14,
+        )
+        
         # Build layout
         self.controls = [
             ft.Text("User Settings", size=20, weight=ft.FontWeight.BOLD),
@@ -110,6 +127,18 @@ class SettingsTab(ft.Column):
                 "Note: Changing server will disconnect and reconnect",
                 size=12,
                 color=ft.Colors.ORANGE_400,
+            ),
+            
+            ft.Container(height=40),
+            ft.Text("Display Settings", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            self.needed_spot_label,
+            self.needed_spot_slider,
+            ft.Text(
+                "Needed spots (amber highlights) stay visible longer than regular spots",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
             ),
         ]
         
@@ -214,6 +243,20 @@ class SettingsTab(ft.Column):
     def _auto_connect_changed(self, e):
         """Handle auto-connect checkbox change"""
         set_auto_connect(self.auto_connect_checkbox.value)
+    
+    def _needed_spot_duration_changed(self, e):
+        """Handle needed spot duration slider change"""
+        minutes = int(self.needed_spot_slider.value)
+        self.needed_spot_label.value = f"Keep needed (amber) spots visible for: {minutes} minutes"
+        self.needed_spot_label.update()
+        
+        # Save to config
+        from backend.config import set_needed_spot_minutes
+        set_needed_spot_minutes(minutes)
+        
+        # Notify main UI to update the spot table
+        if hasattr(self.page, 'spot_table'):
+            self.page.spot_table.set_needed_spot_duration(minutes)
     
     def _show_error(self, message):
         """Show error snackbar"""

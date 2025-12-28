@@ -164,7 +164,7 @@ async def run_cluster_monitor(server_host: str = None, server_port: int = None):
                         "comment": parts[spotComment],
                         "time": parts[spotZulu],
                     }
-                    #print(f"DEBUG: Publishing spot: {spot['call']} on {spot['band']}")  # ADD THI
+                    #print(f"DEBUG: Publishing spot: {spot['call']} on {spot['band']}")
                     publish({"type": "spot", "data": spot})
                 
                 # Clean disconnect
