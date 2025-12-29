@@ -12,9 +12,10 @@ from frontend.components.live_spot_table import LiveSpotTable
 from frontend.components.settings_tab import SettingsTab
 from frontend.components.challenge_table import ChallengeTable
 from frontend.components.band_schedule_dialog import BandScheduleDialog
+from frontend.components.ffma_table import FFMATable
 
 from backend.cluster_async import start_connection
-from backend.config import get_user_grid, get_auto_connect
+from backend.config import get_user_grid, get_auto_connect, load_config, save_config
 
 from backend.dxcc_challenge import get_stats
 from backend.dxcc_lookup import get_country_from_prefix
@@ -160,12 +161,22 @@ class MainUI(ft.Column):
             spacing=10,
         )
 
-        # Command input
+        # Command input with history
+        config = load_config()
+        history_str = config.get('cluster', 'command_history', fallback='')
+        self.command_history = [cmd.strip() for cmd in history_str.split('|') if cmd.strip()] if history_str else []
+        
         self.command_field = ft.TextField(
             label="Cluster Command",
             hint_text="e.g., set/filter dxcty/reject k",
             width=400,
             on_submit=self._send_command,
+        )
+        
+        self.history_button = ft.IconButton(
+            icon=ft.Icons.HISTORY,
+            tooltip="Command History",
+            on_click=self._show_command_history,
         )
 
         self.send_button = ft.ElevatedButton(
@@ -183,6 +194,7 @@ class MainUI(ft.Column):
             [
                 ft.Text("Command:", weight=ft.FontWeight.BOLD),
                 self.command_field,
+                self.history_button,
                 self.send_button,
                 self.help_button,
             ],
@@ -212,6 +224,13 @@ class MainUI(ft.Column):
             initial_connection_state=get_auto_connect()
         )
         
+        # FFMA tab
+        ffma_tab = ft.Tab(
+            text="FFMA",
+            icon=ft.Icons.GRID_4X4,
+            content=FFMATable(),
+        )
+        
         challenge_tab_content = ChallengeTable()
 
         # Create tabs
@@ -228,6 +247,11 @@ class MainUI(ft.Column):
                     text="Challenge",
                     icon=ft.Icons.EMOJI_EVENTS,  # Trophy icon
                     content=challenge_tab_content,
+                ),
+                ft.Tab(
+                    text="FFMA",
+                    icon=ft.Icons.GRID_4X4,  # Grid icon
+                    content=FFMATable(),
                 ),
                 ft.Tab(
                     text="Settings",
@@ -412,21 +436,107 @@ class MainUI(ft.Column):
     # COMMAND HANDLING
     # ------------------------------------------------------------
     def _send_command(self, e):
-        """Send command to cluster"""
-        cmd = self.command_field.value.strip()
-        # print(f"DEBUG: _send_command called with: '{cmd}'")
+        """Send command to cluster and add to history"""
+        cmd = self.command_field.value.strip() if self.command_field.value else ""
         if not cmd:
-            # print("DEBUG: Command was empty!")
             return
         
         # Publish command to backend via message bus
-        # print(f"DEBUG: Publishing command: {cmd}")
         publish({"type": "cluster_command", "data": cmd})
+        
+        # Add to history (no dupes, keep last 10)
+        self._add_to_command_history(cmd)
         
         # Clear the field
         self.command_field.value = ""
         self.command_field.update()
-        # print("DEBUG: Command sent and field cleared")
+    
+    def _add_to_command_history(self, cmd):
+        """Add command to history, removing dupes and keeping last 10"""
+        config = load_config()
+        if 'cluster' not in config:
+            config['cluster'] = {}
+        
+        # Remove this command if it already exists (no dupes)
+        self.command_history = [c for c in self.command_history if c != cmd]
+        
+        # Add to front
+        self.command_history.insert(0, cmd)
+        
+        # Keep only last 10
+        self.command_history = self.command_history[:10]
+        
+        # Save back to config
+        config['cluster']['command_history'] = '|'.join(self.command_history)
+        save_config(config)
+    
+    def _show_command_history(self, e):
+        """Show command history menu"""
+        if not self.command_history:
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Text("No command history yet"),
+            )
+            self.page.snack_bar.open = True
+            self.page.update()
+            return
+        
+        def use_command(cmd):
+            def handler(e):
+                self.command_field.value = cmd
+                self.command_field.update()
+                self.command_field.focus()
+                menu_anchor.close_view()
+            return handler
+        
+        # Create menu items from history
+        items = [
+            ft.MenuItemButton(
+                content=ft.Text(cmd, size=13),
+                on_click=use_command(cmd),
+            )
+            for cmd in self.command_history
+        ]
+        
+        menu_anchor = ft.MenuBar(
+            controls=items
+        )
+        
+        # Show bottom sheet instead
+        def close_bs(e):
+            bs.open = False
+            self.page.update()
+        
+        bs = ft.BottomSheet(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Row([
+                        ft.Text("Command History", size=18, weight=ft.FontWeight.BOLD),
+                        ft.IconButton(icon=ft.Icons.CLOSE, on_click=close_bs),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Divider(),
+                    ft.Column([
+                        ft.ElevatedButton(
+                            cmd,
+                            on_click=lambda e, c=cmd: self._use_history_command(c, bs),
+                            width=500,
+                        )
+                        for cmd in self.command_history
+                    ]),
+                ]),
+                padding=20,
+            ),
+        )
+        
+        self.page.overlay.append(bs)
+        bs.open = True
+        self.page.update()
+    
+    def _use_history_command(self, cmd, bottom_sheet):
+        """Fill command field with history command"""
+        self.command_field.value = cmd
+        self.command_field.update()
+        bottom_sheet.open = False
+        self.page.update()
 
     def _show_command_help(self, e):
         """Show dialog with common commands"""

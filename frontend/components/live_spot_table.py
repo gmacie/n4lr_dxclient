@@ -17,6 +17,13 @@ except:
     print("DXCC Challenge module not available")
 
 try:
+    from backend.ffma_tracking import is_grid_needed
+    FFMA_AVAILABLE = True
+except:
+    FFMA_AVAILABLE = False
+    print("FFMA tracking module not available")
+
+try:
     from backend.config import load_config
     CONFIG_AVAILABLE = True
 except:
@@ -109,17 +116,35 @@ class LiveSpotTable(ft.Column):
         # Add timestamp for age tracking
         spot['timestamp'] = datetime.now()
         
-        # Check if this spot is needed
-        is_spot_needed = False
+        # Check if this spot is needed for Challenge
+        is_spot_needed_challenge = False
         if CHALLENGE_AVAILABLE:
             try:
-                is_spot_needed = is_needed(spot.get("dxcc", ""), spot.get("band", ""))
+                is_spot_needed_challenge = is_needed(spot.get("dxcc", ""), spot.get("band", ""))
             except:
                 pass
         
-        # Add to appropriate buffer
-        if is_spot_needed:
-            # Add to needed spots buffer
+        # Check if this spot is needed for FFMA
+        is_spot_needed_ffma = False
+        if FFMA_AVAILABLE and spot.get("band", "").upper() == "6M":
+            try:
+                grid = spot.get("grid", "")
+                if grid:
+                    is_spot_needed_ffma = is_grid_needed(grid)
+            except:
+                pass
+        
+        # Add to appropriate buffer (either Challenge or FFMA needed goes to needed buffer)
+        if is_spot_needed_challenge or is_spot_needed_ffma:
+            # Remove any existing spot with same callsign+band from needed buffer
+            call = spot.get("call", "")
+            band = spot.get("band", "")
+            self.needed_spots = [
+                s for s in self.needed_spots
+                if not (s.get("call") == call and s.get("band") == band)
+            ]
+            
+            # Add new spot to needed spots buffer
             self.needed_spots.insert(0, spot)
             # Clean old needed spots
             self._clean_old_needed_spots()
@@ -222,7 +247,7 @@ class LiveSpotTable(ft.Column):
         # Clean old needed spots before rebuilding
         self._clean_old_needed_spots()
         
-        # Combine both buffers: needed spots first (they're amber), then regular
+        # Combine both buffers: needed spots first, then regular
         all_spots = self.needed_spots + self.regular_spots
         
         for s in all_spots:
@@ -230,12 +255,33 @@ class LiveSpotTable(ft.Column):
                 continue
         
             # Check if this spot is needed for DXCC Challenge
-            needed = False
+            needed_challenge = False
             if CHALLENGE_AVAILABLE:
                 try:
-                    needed = is_needed(s.get("dxcc", ""), s.get("band", ""))
+                    needed_challenge = is_needed(s.get("dxcc", ""), s.get("band", ""))
                 except:
                     pass
+            
+            # Check if this spot is needed for FFMA (6m grids only)
+            needed_ffma = False
+            if FFMA_AVAILABLE and s.get("band", "").upper() == "6M":
+                try:
+                    grid = s.get("grid", "")
+                    if grid:
+                        needed_ffma = is_grid_needed(grid)
+                except:
+                    pass
+            
+            # Determine highlight color (Challenge takes priority)
+            if needed_challenge:
+                highlight_color = ft.Colors.AMBER_200  # Challenge - amber
+                text_color = ft.Colors.BLACK
+            elif needed_ffma:
+                highlight_color = ft.Colors.CYAN_200  # FFMA - cyan
+                text_color = ft.Colors.BLACK
+            else:
+                highlight_color = None
+                text_color = None
         
             # Format callsign with LoTW indicator
             call = s.get("call", "")
@@ -245,31 +291,31 @@ class LiveSpotTable(ft.Column):
                     # Active user - green +
                     call_display = ft.Row([
                         ft.Text("+", color=ft.Colors.GREEN, weight=ft.FontWeight.BOLD),
-                        ft.Text(call, color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None),
+                        ft.Text(call, color=text_color, weight=ft.FontWeight.BOLD if (needed_challenge or needed_ffma) else None),
                     ], spacing=2)
                 else:
                     # Inactive user - orange +
                     call_display = ft.Row([
                         ft.Text("+", color=ft.Colors.ORANGE, weight=ft.FontWeight.BOLD),
-                        ft.Text(call, color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None),
+                        ft.Text(call, color=text_color, weight=ft.FontWeight.BOLD if (needed_challenge or needed_ffma) else None),
                     ], spacing=2)
             else:
                 # Not a LoTW user
-                call_display = ft.Text(call, color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None)
+                call_display = ft.Text(call, color=text_color, weight=ft.FontWeight.BOLD if (needed_challenge or needed_ffma) else None)
         
-            # Create row with amber background if needed
+            # Create row with appropriate background color
             row = ft.DataRow(
                 cells=[
-                    ft.DataCell(ft.Text(s.get("time", ""), color=ft.Colors.BLACK if needed else None)),
-                    ft.DataCell(ft.Text(s.get("band", ""), color=ft.Colors.BLACK if needed else None)),
-                    ft.DataCell(ft.Text(s.get("freq", ""), color=ft.Colors.BLACK if needed else None)),
+                    ft.DataCell(ft.Text(s.get("time", ""), color=text_color)),
+                    ft.DataCell(ft.Text(s.get("band", ""), color=text_color)),
+                    ft.DataCell(ft.Text(s.get("freq", ""), color=text_color)),
                     ft.DataCell(call_display),
-                    ft.DataCell(ft.Text(s.get("dxcc", ""), color=ft.Colors.BLACK if needed else None, weight=ft.FontWeight.BOLD if needed else None)),
-                    ft.DataCell(ft.Text(s.get("grid", ""), color=ft.Colors.BLACK if needed else None)),
-                    ft.DataCell(ft.Text(s.get("spotter", ""), color=ft.Colors.BLACK if needed else None)),
-                    ft.DataCell(ft.Text(s.get("comment", ""), color=ft.Colors.BLACK if needed else None)),
+                    ft.DataCell(ft.Text(s.get("dxcc", ""), color=text_color, weight=ft.FontWeight.BOLD if (needed_challenge or needed_ffma) else None)),
+                    ft.DataCell(ft.Text(s.get("grid", ""), color=text_color)),
+                    ft.DataCell(ft.Text(s.get("spotter", ""), color=text_color)),
+                    ft.DataCell(ft.Text(s.get("comment", ""), color=text_color)),
                 ],
-                color=ft.Colors.AMBER_200 if needed else None,
+                color=highlight_color,
             )
             rows.append(row)
     

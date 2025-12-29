@@ -87,6 +87,43 @@ class SettingsTab(ft.Column):
             size=14,
         )
         
+        # LoTW credentials section
+        from backend.config import get_lotw_username, get_lotw_password, get_last_vucc_update
+        
+        self.lotw_username_field = ft.TextField(
+            label="LoTW Username",
+            hint_text="Usually your callsign",
+            value=get_lotw_username(),
+            width=200,
+        )
+        
+        self.lotw_password_field = ft.TextField(
+            label="LoTW Password",
+            hint_text="Your LoTW password",
+            value=get_lotw_password(),
+            password=True,
+            can_reveal_password=True,
+            width=200,
+        )
+        
+        self.lotw_save_button = ft.ElevatedButton(
+            text="Save Credentials",
+            on_click=self._save_lotw_credentials,
+        )
+        
+        self.lotw_download_button = ft.ElevatedButton(
+            text="Download VUCC Data",
+            icon=ft.Icons.DOWNLOAD,
+            on_click=self._download_vucc_data,
+        )
+        
+        last_update = get_last_vucc_update()
+        self.lotw_status_text = ft.Text(
+            f"Last updated: {last_update if last_update else 'Never'}",
+            size=12,
+            color=ft.Colors.BLUE_GREY_400,
+        )
+        
         # Build layout
         self.controls = [
             ft.Text("User Settings", size=20, weight=ft.FontWeight.BOLD),
@@ -139,6 +176,43 @@ class SettingsTab(ft.Column):
                 "Needed spots (amber highlights) stay visible longer than regular spots",
                 size=12,
                 color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=40),
+            ft.Text("LoTW Integration (FFMA)", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Text(
+                "Enter your LoTW credentials to download VUCC confirmations for FFMA tracking",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=10),
+            
+            ft.Row([
+                ft.Column([
+                    self.lotw_username_field,
+                ]),
+                ft.Container(width=20),
+                ft.Column([
+                    self.lotw_password_field,
+                ]),
+            ]),
+            
+            ft.Container(height=10),
+            
+            ft.Row([
+                self.lotw_save_button,
+                self.lotw_download_button,
+            ], spacing=10),
+            
+            self.lotw_status_text,
+            
+            ft.Text(
+                "Note: Password is stored in config.ini. Download fetches 6m confirmations for FFMA.",
+                size=12,
+                color=ft.Colors.ORANGE_400,
             ),
         ]
         
@@ -257,6 +331,76 @@ class SettingsTab(ft.Column):
         # Notify main UI to update the spot table
         if hasattr(self.page, 'spot_table'):
             self.page.spot_table.set_needed_spot_duration(minutes)
+    
+    def _save_lotw_credentials(self, e):
+        """Save LoTW credentials"""
+        username = self.lotw_username_field.value.strip()
+        password = self.lotw_password_field.value.strip()
+        
+        if not username or not password:
+            self._show_error("Please enter both username and password")
+            return
+        
+        from backend.config import set_lotw_credentials
+        set_lotw_credentials(username, password)
+        
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text("LoTW credentials saved"),
+            bgcolor=ft.Colors.GREEN_400,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+    
+    def _download_vucc_data(self, e):
+        """Download VUCC data from LoTW"""
+        from backend.config import get_lotw_username, get_lotw_password, set_last_vucc_update
+        
+        username = get_lotw_username()
+        password = get_lotw_password()
+        
+        if not username or not password:
+            self._show_error("Please save LoTW credentials first")
+            return
+        
+        # Show progress
+        self.lotw_download_button.disabled = True
+        self.lotw_download_button.text = "Downloading..."
+        self.lotw_download_button.update()
+        
+        try:
+            from backend.lotw_vucc import download_and_parse_ffma
+            from datetime import datetime
+            
+            success, result = download_and_parse_ffma(username, password)
+            
+            if success:
+                # Update status
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                set_last_vucc_update(timestamp)
+                self.lotw_status_text.value = f"Last updated: {timestamp}"
+                self.lotw_status_text.update()
+                
+                # Show success
+                total = result.get('total_worked', 0)
+                pct = result.get('completion_pct', 0)
+                
+                self.page.snack_bar = ft.SnackBar(
+                    content=ft.Text(f"Success! {total}/488 FFMA grids confirmed ({pct}%)"),
+                    bgcolor=ft.Colors.GREEN_400,
+                )
+                self.page.snack_bar.open = True
+                self.page.update()
+            else:
+                self._show_error(f"Download failed: {result}")
+        
+        except Exception as ex:
+            self._show_error(f"Error: {str(ex)}")
+        
+        finally:
+            # Re-enable button
+            self.lotw_download_button.disabled = False
+            self.lotw_download_button.text = "Download VUCC Data"
+            self.lotw_download_button.update()
     
     def _show_error(self, message):
         """Show error snackbar"""

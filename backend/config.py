@@ -30,6 +30,11 @@ def load_config():
         config['display'] = {
             'needed_spot_minutes': '15'
         }
+        config['lotw'] = {
+            'username': '',
+            'password': '',
+            'last_vucc_update': ''
+        }
         save_config(config)
     
     # Ensure display section exists
@@ -123,4 +128,36 @@ def set_user_settings(callsign, grid):
         config['user'] = {}
     config['user']['callsign'] = callsign
     config['user']['grid'] = grid.upper()
+    save_config(config)
+
+def get_lotw_username():
+    """Get LoTW username"""
+    config = load_config()
+    return config.get('lotw', 'username', fallback='')
+
+def get_lotw_password():
+    """Get LoTW password"""
+    config = load_config()
+    return config.get('lotw', 'password', fallback='')
+
+def set_lotw_credentials(username, password):
+    """Set LoTW username and password"""
+    config = load_config()
+    if 'lotw' not in config:
+        config['lotw'] = {}
+    config['lotw']['username'] = username
+    config['lotw']['password'] = password
+    save_config(config)
+
+def get_last_vucc_update():
+    """Get last VUCC data update timestamp"""
+    config = load_config()
+    return config.get('lotw', 'last_vucc_update', fallback='')
+
+def set_last_vucc_update(timestamp):
+    """Set last VUCC data update timestamp"""
+    config = load_config()
+    if 'lotw' not in config:
+        config['lotw'] = {}
+    config['lotw']['last_vucc_update'] = timestamp
     save_config(config)
