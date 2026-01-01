@@ -17,6 +17,13 @@ except:
     print("DXCC Challenge module not available")
 
 try:
+    from backend.dxcc_lookup import lookup_dxcc_from_prefix
+    DXCC_LOOKUP_AVAILABLE = True
+except:
+    DXCC_LOOKUP_AVAILABLE = False
+    print("DXCC lookup not available")
+
+try:
     from backend.ffma_tracking import is_grid_needed
     FFMA_AVAILABLE = True
 except:
@@ -57,6 +64,15 @@ class LiveSpotTable(ft.Column):
             try:
                 config = load_config()
                 self.needed_spot_minutes = config.getint('display', 'needed_spot_minutes', fallback=15)
+            except:
+                pass
+        
+        # Load blocked spotters from config
+        self.blocked_spotters = []
+        if CONFIG_AVAILABLE:
+            try:
+                from backend.config import get_blocked_spotters
+                self.blocked_spotters = get_blocked_spotters()
             except:
                 pass
         
@@ -113,14 +129,29 @@ class LiveSpotTable(ft.Column):
     def add_spot(self, spot: dict):
         """Add spot to appropriate buffer and rebuild if enough time has passed"""
         
+        
+        # DEBUG - Print first spot to see what data we have
+        if not hasattr(self, '_debug_printed'):
+            print(f"\nDEBUG SPOT DATA:")
+            print(f"  Call: {spot.get('call')}")
+            print(f"  DXCC: '{spot.get('dxcc')}'")
+            print(f"  Band: '{spot.get('band')}'")
+            print(f"  Grid: '{spot.get('grid')}'")
+            self._debug_printed = True
+        
         # Add timestamp for age tracking
         spot['timestamp'] = datetime.now()
         
         # Check if this spot is needed for Challenge
         is_spot_needed_challenge = False
-        if CHALLENGE_AVAILABLE:
+        if CHALLENGE_AVAILABLE and DXCC_LOOKUP_AVAILABLE:
             try:
-                is_spot_needed_challenge = is_needed(spot.get("dxcc", ""), spot.get("band", ""))
+                # Convert prefix to DXCC number
+                dxcc_prefix = spot.get("dxcc", "")
+                dxcc_num = lookup_dxcc_from_prefix(dxcc_prefix) if dxcc_prefix else None
+                
+                if dxcc_num:
+                    is_spot_needed_challenge = is_needed(dxcc_num, spot.get("band", ""))
             except:
                 pass
         
@@ -183,6 +214,11 @@ class LiveSpotTable(ft.Column):
         self.filter_needed_only = enabled
         self._schedule_rebuild()
     
+    def set_blocked_spotters(self, spotters_list):
+        """Update blocked spotters list"""
+        self.blocked_spotters = [s.upper() for s in spotters_list]
+        self._schedule_rebuild()
+    
     def _schedule_rebuild(self):
         """Schedule a rebuild immediately"""
         self._rebuild_rows()
@@ -216,6 +252,17 @@ class LiveSpotTable(ft.Column):
         if self.filter_dxcc and self.filter_dxcc not in dxcc:
             return False
         
+        if band not in self.filter_bands:
+            return False  # This band is not in the selected list
+        
+        # Blocked spotters filter  # ADD THIS
+        spotter = str(s.get("spotter", "")).upper()
+        if spotter in self.blocked_spotters:
+            return False  # Block this spotter
+        
+        if self.filter_grid and not grid.startswith(self.filter_grid):
+            return False
+        
         # LoTW Only filter
         if self.filter_lotw_only:
             if LOTW_AVAILABLE:
@@ -229,9 +276,12 @@ class LiveSpotTable(ft.Column):
         
         # Needed Only filter
         if self.filter_needed_only:
-            if CHALLENGE_AVAILABLE:
+            if CHALLENGE_AVAILABLE and DXCC_LOOKUP_AVAILABLE:
                 try:
-                    if not is_needed(s.get("dxcc", ""), s.get("band", "")):
+                    dxcc_prefix = s.get("dxcc", "")
+                    dxcc_num = lookup_dxcc_from_prefix(dxcc_prefix) if dxcc_prefix else None
+                    
+                    if not dxcc_num or not is_needed(dxcc_num, s.get("band", "")):
                         return False
                 except:
                     return False
@@ -256,9 +306,14 @@ class LiveSpotTable(ft.Column):
         
             # Check if this spot is needed for DXCC Challenge
             needed_challenge = False
-            if CHALLENGE_AVAILABLE:
+            if CHALLENGE_AVAILABLE and DXCC_LOOKUP_AVAILABLE:
                 try:
-                    needed_challenge = is_needed(s.get("dxcc", ""), s.get("band", ""))
+                    # Convert prefix to DXCC number
+                    dxcc_prefix = s.get("dxcc", "")
+                    dxcc_num = lookup_dxcc_from_prefix(dxcc_prefix) if dxcc_prefix else None
+                    
+                    if dxcc_num:
+                        needed_challenge = is_needed(dxcc_num, s.get("band", ""))
                 except:
                     pass
             

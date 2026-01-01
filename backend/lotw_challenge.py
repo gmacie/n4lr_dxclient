@@ -1,0 +1,306 @@
+"""
+LoTW Challenge Data Download and Parser
+Downloads DXCC credits from LoTW and parses into challenge_data.json
+Supports incremental updates using qso_qslsince parameter
+"""
+
+import requests
+import json
+from pathlib import Path
+from datetime import datetime
+import re
+
+
+def download_challenge_qsos(username, password, since_date=None, start_date=None, callsign=None):
+    """
+    Download Challenge confirmations from LoTW
+    
+    Args:
+        username: LoTW username
+        password: LoTW password
+        since_date: Optional YYYY-MM-DD for incremental update
+        start_date: Optional YYYY-MM-DD for earliest QSO date
+        callsign: Optional callsign filter (e.g., N4LR)
+        
+    Returns:
+        tuple: (success, adif_text or error_message)
+    """
+    
+    # Build URL for LoTW DXCC credits download
+    url = "https://lotw.arrl.org/lotwuser/lotwreport.adi"
+    
+    params = {
+        "login": username,
+        "password": password,
+        "qso_query": "1",
+        "qso_qsl": "yes",  # Only confirmed QSOs
+        "qso_qsldetail": "yes",  # Include details
+    }
+    
+    # Add callsign filter if provided
+    if callsign:
+        params["qso_mydetail"] = "yes"  # Include station details
+        params["qso_owncall"] = callsign
+        print(f"Filtering for callsign: {callsign}")
+    
+    # Add start date if provided
+    if start_date:
+        params["qso_startdate"] = start_date
+        print(f"Starting from date: {start_date}")
+    
+    # Add incremental update parameter if provided
+    if since_date:
+        params["qso_qslsince"] = since_date
+        print(f"Downloading Challenge data since {since_date}...")
+    else:
+        print("Downloading full Challenge data (first time)...")
+    
+    try:
+        # Debug: show the full URL
+        from urllib.parse import urlencode
+        full_url = f"{url}?{urlencode(params)}"
+        print(f"\nAPI URL: {full_url}\n")
+        
+        response = requests.get(url, params=params, timeout=120)
+        
+        if response.status_code != 200:
+            return False, f"HTTP {response.status_code}"
+        
+        # Check if response is HTML (error page)
+        if response.text.strip().startswith('<'):
+            return False, "Authentication failed or LoTW error"
+        
+        print(f"Downloaded {len(response.text)} bytes")
+        return True, response.text
+        
+    except requests.exceptions.Timeout:
+        return False, "Download timeout (try again)"
+    except requests.exceptions.RequestException as e:
+        return False, f"Network error: {str(e)}"
+
+
+def parse_challenge_adif(adif_text, existing_data=None):
+    """
+    Parse ADIF text and extract Challenge data (all bands including 60m)
+    Tracks BOTH confirmed (QSL_RCVD=Y) and credited (CREDIT_GRANTED) slots
+    
+    Args:
+        adif_text: ADIF format text
+        existing_data: Optional existing challenge data for incremental update
+        
+    Returns:
+        dict: Challenge statistics with both confirmed and credited data
+    """
+    
+    # Start with existing data or empty
+    if existing_data:
+        confirmed_pairs = set(tuple(pair) for pair in existing_data.get("raw_band_entity_pairs", []))
+        credited_pairs = set(tuple(pair) for pair in existing_data.get("credited_band_entity_pairs", []))
+    else:
+        confirmed_pairs = set()
+        credited_pairs = set()
+    
+    # Parse ADIF records
+    # Split by <eor> or <EOR>
+    records = re.split(r'<eor>|<EOR>', adif_text, flags=re.IGNORECASE)
+    
+    new_confirmed = 0
+    new_credited = 0
+    
+    for record in records:
+        if not record.strip():
+            continue
+        
+        # Extract fields using regex
+        fields = {}
+        for match in re.finditer(r'<([^:>]+):(\d+)(?::([^>]+))?>([^<]*)', record, re.IGNORECASE):
+            field_name = match.group(1).upper()
+            field_value = match.group(4).strip()
+            fields[field_name] = field_value
+        
+        # Need BAND and DXCC
+        band = fields.get('BAND', '').upper()
+        dxcc = fields.get('DXCC', '')
+        qsl_rcvd = fields.get('QSL_RCVD', '').upper()
+        credit_granted = fields.get('CREDIT_GRANTED', '').upper()
+        
+        # Only count confirmed QSOs
+        if qsl_rcvd != 'Y':
+            continue
+        
+        if not band or not dxcc:
+            continue
+        
+        # Filter out invalid DXCC entities
+        try:
+            dxcc_int = int(dxcc)
+            # DXCC 0 = Maritime Mobile, negative = invalid
+            # Valid DXCC range is 1-999
+            if dxcc_int <= 0 or dxcc_int > 999:
+                continue
+        except ValueError:
+            continue  # Not a valid integer
+        
+        # Normalize band names
+        band_map = {
+            '160M': '160M',
+            '80M': '80M',
+            '60M': '60M',
+            '40M': '40M',
+            '30M': '30M',
+            '20M': '20M',
+            '17M': '17M',
+            '15M': '15M',
+            '12M': '12M',
+            '10M': '10M',
+            '6M': '6M',
+        }
+        
+        band = band_map.get(band, band)
+        
+        # Add to confirmed set (QSL_RCVD = Y)
+        pair = (band, int(dxcc))
+        if pair not in confirmed_pairs:
+            new_confirmed += 1
+        confirmed_pairs.add(pair)
+        
+        # Add to credited set if CREDIT_GRANTED exists
+        if credit_granted and credit_granted != '':
+            if pair not in credited_pairs:
+                new_credited += 1
+            credited_pairs.add(pair)
+    
+    print(f"Found {new_confirmed} new confirmed band/entity pairs")
+    print(f"Found {new_credited} new credited band/entity pairs")
+    print(f"Total confirmed pairs: {len(confirmed_pairs)}")
+    print(f"Total credited pairs: {len(credited_pairs)}")
+    
+    # Count entities by band for CONFIRMED
+    confirmed_entities_by_band = {}
+    confirmed_unique_entities = set()
+    
+    for band, dxcc in confirmed_pairs:
+        if band not in confirmed_entities_by_band:
+            confirmed_entities_by_band[band] = set()
+        confirmed_entities_by_band[band].add(dxcc)
+        confirmed_unique_entities.add(dxcc)
+    
+    # Count entities by band for CREDITED
+    credited_entities_by_band = {}
+    credited_unique_entities = set()
+    
+    for band, dxcc in credited_pairs:
+        if band not in credited_entities_by_band:
+            credited_entities_by_band[band] = set()
+        credited_entities_by_band[band].add(dxcc)
+        credited_unique_entities.add(dxcc)
+    
+    # Convert sets to counts
+    confirmed_entities_by_band = {band: len(entities) for band, entities in confirmed_entities_by_band.items()}
+    credited_entities_by_band = {band: len(entities) for band, entities in credited_entities_by_band.items()}
+    
+    # Build result
+    result = {
+        # Confirmed data (QSL_RCVD = Y) - used for highlighting
+        "total_entities": len(confirmed_unique_entities),
+        "total_challenge_slots": len(confirmed_pairs),
+        "entities_by_band": confirmed_entities_by_band,
+        "raw_band_entity_pairs": list(confirmed_pairs),
+        
+        # Credited data (CREDIT_GRANTED) - for comparison with LoTW
+        "credited_total_entities": len(credited_unique_entities),
+        "credited_total_slots": len(credited_pairs),
+        "credited_entities_by_band": credited_entities_by_band,
+        "credited_band_entity_pairs": list(credited_pairs),
+        
+        "last_updated": datetime.now().isoformat(),
+    }
+    
+    return result
+
+
+def save_challenge_data(data, filename="challenge_data.json"):
+    """Save challenge data to JSON file"""
+    try:
+        Path(filename).write_text(json.dumps(data, indent=2))
+        print(f"Saved challenge data to {filename}")
+        return True
+    except Exception as e:
+        print(f"Error saving challenge data: {e}")
+        return False
+
+
+def download_and_parse_challenge(username, password, since_date=None, start_date="2000-01-01", callsign=None):
+    """
+    Complete workflow: download from LoTW and parse Challenge data
+    
+    Args:
+        username: LoTW username
+        password: LoTW password
+        since_date: Optional YYYY-MM-DD for incremental update
+        start_date: Optional YYYY-MM-DD for earliest QSO date (default: 2000-01-01)
+        callsign: Optional callsign filter (e.g., N4LR)
+        
+    Returns:
+        tuple: (success, result_dict or error_message)
+    """
+    
+    # Download from LoTW
+    success, result = download_challenge_qsos(username, password, since_date, start_date, callsign)
+    
+    if not success:
+        return False, result
+    
+    adif_text = result
+    
+    # Save raw ADIF for debugging
+    try:
+        Path("lotwreport_challenge.adi").write_text(adif_text)
+        print("Saved raw ADIF to lotwreport_challenge.adi")
+    except:
+        pass
+    
+    # Load existing data for incremental update
+    existing_data = None
+    if since_date:
+        challenge_file = Path("challenge_data.json")
+        if challenge_file.exists():
+            try:
+                existing_data = json.loads(challenge_file.read_text())
+                print(f"Loaded existing data: {existing_data.get('total_challenge_slots', 0)} slots")
+            except:
+                print("Could not load existing data, doing full parse")
+    
+    # Parse ADIF
+    challenge_data = parse_challenge_adif(adif_text, existing_data)
+    
+    # Save to file
+    if save_challenge_data(challenge_data):
+        return True, challenge_data
+    else:
+        return False, "Failed to save challenge data"
+
+
+if __name__ == "__main__":
+    # Test
+    print("Challenge Data Download Test")
+    print("=" * 50)
+    
+    # You would need to provide credentials
+    username = input("LoTW Username: ").strip()
+    password = input("LoTW Password: ").strip()
+    callsign = input("Filter by callsign (e.g., N4LR, or press Enter for all): ").strip().upper() or None
+    start_date = input("Start date (YYYY-MM-DD, or press Enter for 2000-01-01): ").strip() or "2000-01-01"
+    
+    if username and password:
+        success, result = download_and_parse_challenge(username, password, None, start_date, callsign)
+        
+        if success:
+            print("\nSuccess!")
+            print(f"Total Entities: {result['total_entities']}")
+            print(f"Total Slots: {result['total_challenge_slots']}")
+            print(f"\nBand breakdown:")
+            for band, count in sorted(result['entities_by_band'].items()):
+                print(f"  {band}: {count}")
+        else:
+            print(f"\nError: {result}")

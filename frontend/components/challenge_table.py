@@ -16,6 +16,10 @@ class ChallengeTable(ft.Column):
         # Load challenge data
         self.challenge_data = self._load_challenge_data()
         
+        # Sort state: 'country' or 'prefix'
+        self.sort_by = 'prefix'  # Default to prefix sort
+        self.sort_reverse = False  # False = ascending, True = descending
+        
         # Build UI
         self.controls = [
             self._build_summary(),
@@ -97,10 +101,29 @@ class ChallengeTable(ft.Column):
         if not self.challenge_data:
             return ft.Text("No data to display")
         
-        # Build header row
+        # Build header row with clickable sort buttons
+        # Show arrow on active column: ▲ for ascending, ▼ for descending
+        country_arrow = ""
+        prefix_arrow = ""
+        
+        if self.sort_by == 'country':
+            country_arrow = " ▲" if not self.sort_reverse else " ▼"
+        else:  # prefix
+            prefix_arrow = " ▲" if not self.sort_reverse else " ▼"
+        
         columns = [
-            ft.DataColumn(ft.Text("Entity", weight=ft.FontWeight.BOLD)),
-            ft.DataColumn(ft.Text("Prefix", weight=ft.FontWeight.BOLD)),
+            ft.DataColumn(
+                ft.TextButton(
+                    "Country" + country_arrow,
+                    on_click=self._sort_by_country,
+                ),
+            ),
+            ft.DataColumn(
+                ft.TextButton(
+                    "Prefix" + prefix_arrow,
+                    on_click=self._sort_by_prefix,
+                ),
+            ),
         ]
         
         bands = ["160M", "80M", "60M", "40M", "30M", "20M", "17M", "15M", "12M", "10M", "6M"]
@@ -110,10 +133,24 @@ class ChallengeTable(ft.Column):
         # Build data rows
         rows = []
         
-        entities_sorted = sorted(self.challenge_data["entities"].items(), key=lambda x: get_prefix(x[0]))
-        
         # Load DXCC mapping for country names
         dxcc_mapping = self._load_dxcc_mapping()
+        
+        # Sort based on current sort_by state
+        if self.sort_by == 'country':
+            # Sort by country name
+            entities_sorted = sorted(
+                self.challenge_data["entities"].items(),
+                key=lambda x: dxcc_mapping.get(str(x[0]), f"Entity {x[0]}"),
+                reverse=self.sort_reverse
+            )
+        else:  # sort by prefix (default)
+            # Sort by prefix
+            entities_sorted = sorted(
+                self.challenge_data["entities"].items(), 
+                key=lambda x: get_prefix(x[0]),
+                reverse=self.sort_reverse
+            )
         
         for entity_num, bands_worked in entities_sorted:
             country_name = dxcc_mapping.get(str(entity_num), f"Entity {entity_num}")
@@ -164,6 +201,41 @@ class ChallengeTable(ft.Column):
             except:
                 pass
         return {}
+    
+    def _sort_by_country(self, e):
+        """Sort table by country name - toggle direction if already sorting by country"""
+        if self.sort_by == 'country':
+            # Already sorting by country, toggle direction
+            self.sort_reverse = not self.sort_reverse
+        else:
+            # Switching to country sort, default to ascending
+            self.sort_by = 'country'
+            self.sort_reverse = False
+        self._rebuild_table()
+    
+    def _sort_by_prefix(self, e):
+        """Sort table by prefix - toggle direction if already sorting by prefix"""
+        if self.sort_by == 'prefix':
+            # Already sorting by prefix, toggle direction
+            self.sort_reverse = not self.sort_reverse
+        else:
+            # Switching to prefix sort, default to ascending
+            self.sort_by = 'prefix'
+            self.sort_reverse = False
+        self._rebuild_table()
+    
+    def _rebuild_table(self):
+        """Rebuild just the table portion"""
+        # Find the table in controls and replace it
+        self.controls = [
+            self._build_summary(),
+            ft.Divider(height=20),
+            self._build_table(),
+        ]
+        try:
+            self.update()
+        except:
+            pass
     
     def refresh(self):
         """Reload challenge data and rebuild table"""

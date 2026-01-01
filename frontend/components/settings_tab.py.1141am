@@ -1,0 +1,518 @@
+# settings_tab.py - Settings configuration with cluster controls
+import flet as ft
+import asyncio
+from backend.config import (
+    get_user_callsign, get_user_grid, set_user_settings,
+    get_cluster_servers, get_current_server, set_current_server,
+    get_auto_connect, set_auto_connect
+)
+from backend.grid_utils import validate_grid
+from backend.cluster_async import start_connection, stop_connection
+
+
+class SettingsTab(ft.Column):
+    """Settings tab for user configuration and cluster controls"""
+    
+    def __init__(self, page, on_settings_changed, initial_connection_state=False):
+        super().__init__()
+        self.page = page
+        self.on_settings_changed = on_settings_changed
+        self.is_connected = initial_connection_state  # Set based on auto-connect
+        
+        # User settings section
+        self.callsign_field = ft.TextField(
+            label="Callsign",
+            hint_text="e.g., N4LR or N4LR-14",
+            value=get_user_callsign(),
+            width=200,
+        )
+        
+        self.grid_field = ft.TextField(
+            label="Grid Square",
+            hint_text="e.g., EM50",
+            value=get_user_grid(),
+            width=150,
+            on_change=self._validate_grid_input,
+        )
+        
+        self.grid_help = ft.Text(
+            "Enter your 4 or 6-character Maidenhead grid square",
+            size=12,
+            color=ft.Colors.BLUE_GREY_400,
+        )
+        
+        self.save_button = ft.ElevatedButton(
+            text="Save Settings",
+            on_click=self._save_settings,
+        )
+        
+        # Cluster server controls section
+        servers = get_cluster_servers()
+        current = get_current_server()
+        
+        self.server_dropdown = ft.Dropdown(
+            label="Cluster Server",
+            options=[ft.dropdown.Option(s) for s in servers],
+            value=current,
+            width=300,
+            on_change=self._server_changed,
+        )
+        
+        self.connect_button = ft.ElevatedButton(
+            text="Disconnect" if initial_connection_state else "Connect",
+            icon=ft.Icons.LINK_OFF if initial_connection_state else ft.Icons.LINK,
+            on_click=self._toggle_connection,
+        )
+        
+        self.auto_connect_checkbox = ft.Checkbox(
+            label="Auto-connect on startup",
+            value=get_auto_connect(),
+            on_change=self._auto_connect_changed,
+        )
+        
+        # Display settings section
+        from backend.config import get_needed_spot_minutes
+        self.needed_spot_slider = ft.Slider(
+            min=5,
+            max=60,
+            divisions=11,  # 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60
+            value=get_needed_spot_minutes(),
+            label="{value} min",
+            on_change=self._needed_spot_duration_changed,
+            width=400,
+        )
+        
+        self.needed_spot_label = ft.Text(
+            f"Keep needed (amber) spots visible for: {get_needed_spot_minutes()} minutes",
+            size=14,
+        )
+        
+        # LoTW credentials section
+        from backend.config import get_lotw_username, get_lotw_password, get_last_vucc_update
+        
+        self.lotw_username_field = ft.TextField(
+            label="LoTW Username",
+            hint_text="Usually your callsign",
+            value=get_lotw_username(),
+            width=200,
+        )
+        
+        self.lotw_password_field = ft.TextField(
+            label="LoTW Password",
+            hint_text="Your LoTW password",
+            value=get_lotw_password(),
+            password=True,
+            can_reveal_password=True,
+            width=200,
+        )
+        
+        self.lotw_save_button = ft.ElevatedButton(
+            text="Save Credentials",
+            on_click=self._save_lotw_credentials,
+        )
+        
+        self.lotw_download_button = ft.ElevatedButton(
+            text="Download VUCC Data",
+            icon=ft.Icons.DOWNLOAD,
+            on_click=self._download_vucc_data,
+        )
+        
+        last_update = get_last_vucc_update()
+        self.lotw_status_text = ft.Text(
+            f"Last updated: {last_update if last_update else 'Never'}",
+            size=12,
+            color=ft.Colors.BLUE_GREY_400,
+        )
+        
+        # Challenge data download section
+        from backend.config import get_last_challenge_update
+        
+        self.challenge_download_button = ft.ElevatedButton(
+            text="Download Challenge Data",
+            icon=ft.Icons.DOWNLOAD,
+            on_click=self._download_challenge_data,
+        )
+        
+        last_challenge_update = get_last_challenge_update()
+        self.challenge_status_text = ft.Text(
+            f"Last updated: {last_challenge_update if last_challenge_update else 'Never'}",
+            size=12,
+            color=ft.Colors.BLUE_GREY_400,
+        )
+        
+        # Build layout
+        self.controls = [
+            ft.Text("User Settings", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Row([
+                ft.Column([
+                    self.callsign_field,
+                    ft.Text(
+                        "Use callsign with suffix (e.g., N4LR-14) for separate filter profiles",
+                        size=12,
+                        color=ft.Colors.BLUE_GREY_400,
+                    ),
+                ]),
+                ft.Container(width=40),
+                ft.Column([
+                    self.grid_field,
+                    self.grid_help,
+                ]),
+            ]),
+            
+            ft.Container(height=20),
+            self.save_button,
+            
+            ft.Container(height=40),
+            ft.Text("Cluster Connection", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Row([
+                self.server_dropdown,
+                self.connect_button,
+            ], spacing=20),
+            
+            self.auto_connect_checkbox,
+            
+            ft.Container(height=20),
+            ft.Text(
+                "Note: Changing server will disconnect and reconnect",
+                size=12,
+                color=ft.Colors.ORANGE_400,
+            ),
+            
+            ft.Container(height=40),
+            ft.Text("Display Settings", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            self.needed_spot_label,
+            self.needed_spot_slider,
+            ft.Text(
+                "Needed spots (amber highlights) stay visible longer than regular spots",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=40),
+            ft.Text("LoTW Integration (FFMA)", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Text(
+                "Enter your LoTW credentials to download VUCC confirmations for FFMA tracking",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=10),
+            
+            ft.Row([
+                ft.Column([
+                    self.lotw_username_field,
+                ]),
+                ft.Container(width=20),
+                ft.Column([
+                    self.lotw_password_field,
+                ]),
+            ]),
+            
+            ft.Container(height=10),
+            
+            ft.Row([
+                self.lotw_save_button,
+                self.lotw_download_button,
+            ], spacing=10),
+            
+            self.lotw_status_text,
+            
+            ft.Text(
+                "Note: Password is stored in config.ini. Download fetches 6m confirmations for FFMA.",
+                size=12,
+                color=ft.Colors.ORANGE_400,
+            ),
+            
+            ft.Container(height=40),
+            ft.Text("Challenge Data (All Bands)", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Text(
+                "Download DXCC Challenge confirmations from LoTW (includes 60m)",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=10),
+            
+            self.challenge_download_button,
+            self.challenge_status_text,
+            
+            ft.Text(
+                "Note: First download may be 15-22 MB. Subsequent updates are incremental (much smaller).",
+                size=12,
+                color=ft.Colors.ORANGE_400,
+            ),
+        ]
+        
+        self.spacing = 10
+        self.scroll = ft.ScrollMode.AUTO
+    
+    def _validate_grid_input(self, e):
+        """Validate grid square as user types"""
+        grid = self.grid_field.value.strip().upper()
+        if grid and not validate_grid(grid):
+            self.grid_help.value = "Invalid grid square format"
+            self.grid_help.color = ft.Colors.RED_400
+        else:
+            self.grid_help.value = "Enter your 4 or 6-character Maidenhead grid square"
+            self.grid_help.color = ft.Colors.BLUE_GREY_400
+        self.grid_help.update()
+    
+    def _save_settings(self, e):
+        """Save user settings"""
+        callsign = self.callsign_field.value.strip().upper()
+        grid = self.grid_field.value.strip().upper()
+        
+        # Validate callsign
+        if not callsign:
+            self._show_error("Callsign cannot be empty")
+            return
+        
+        # Validate callsign suffix if present
+        if '-' in callsign:
+            suffix = callsign.split('-')[1]
+            if not suffix.isdigit():
+                self._show_error("Callsign suffix must be numeric (e.g., N4LR-14)")
+                return
+        
+        # Validate grid
+        if not grid:
+            self._show_error("Grid square cannot be empty")
+            return
+        
+        if not validate_grid(grid):
+            self._show_error("Invalid grid square format")
+            return
+        
+        # Save to config
+        set_user_settings(callsign, grid)
+        
+        # Notify parent
+        if self.on_settings_changed:
+            self.on_settings_changed(callsign, grid)
+    
+    def _server_changed(self, e):
+        """Handle server selection change"""
+        new_server = self.server_dropdown.value
+        set_current_server(new_server)
+        
+        # If currently connected, reconnect to new server
+        if self.is_connected:
+            self._reconnect_to_server(new_server)
+    
+    def _reconnect_to_server(self, server_str):
+        """Disconnect and reconnect to new server"""
+        parts = server_str.split(':')
+        host = parts[0]
+        port = int(parts[1]) if len(parts) > 1 else 23
+        
+        # Stop current connection
+        stop_connection()
+        
+        # Start new connection after a delay
+        async def delayed_reconnect():
+            await asyncio.sleep(1)
+            return start_connection(host, port)
+        
+        self.page.run_task(delayed_reconnect)
+    
+    def _toggle_connection(self, e):
+        """Toggle cluster connection"""
+        if self.is_connected:
+            # Disconnect
+            stop_connection()
+            self.is_connected = False
+            self.connect_button.text = "Connect"
+            self.connect_button.icon = ft.Icons.LINK
+            self.connect_button.update()
+        else:
+            # Connect
+            server_str = self.server_dropdown.value
+            parts = server_str.split(':')
+            host = parts[0]
+            port = int(parts[1]) if len(parts) > 1 else 23
+            
+            # Use page.run_task to start connection
+            async def connect_task():
+                await start_connection(host, port)
+            
+            self.page.run_task(connect_task)
+            self.is_connected = True
+            self.connect_button.text = "Disconnect"
+            self.connect_button.icon = ft.Icons.LINK_OFF
+            self.connect_button.update()
+    
+    def _auto_connect_changed(self, e):
+        """Handle auto-connect checkbox change"""
+        set_auto_connect(self.auto_connect_checkbox.value)
+    
+    def _needed_spot_duration_changed(self, e):
+        """Handle needed spot duration slider change"""
+        minutes = int(self.needed_spot_slider.value)
+        self.needed_spot_label.value = f"Keep needed (amber) spots visible for: {minutes} minutes"
+        self.needed_spot_label.update()
+        
+        # Save to config
+        from backend.config import set_needed_spot_minutes
+        set_needed_spot_minutes(minutes)
+        
+        # Notify main UI to update the spot table
+        if hasattr(self.page, 'spot_table'):
+            self.page.spot_table.set_needed_spot_duration(minutes)
+    
+    def _save_lotw_credentials(self, e):
+        """Save LoTW credentials"""
+        username = self.lotw_username_field.value.strip()
+        password = self.lotw_password_field.value.strip()
+        
+        if not username or not password:
+            self._show_error("Please enter both username and password")
+            return
+        
+        from backend.config import set_lotw_credentials
+        set_lotw_credentials(username, password)
+        
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text("LoTW credentials saved"),
+            bgcolor=ft.Colors.GREEN_400,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+    
+    def _download_vucc_data(self, e):
+        """Download VUCC data from LoTW"""
+        from backend.config import get_lotw_username, get_lotw_password, set_last_vucc_update
+        
+        username = get_lotw_username()
+        password = get_lotw_password()
+        
+        if not username or not password:
+            self._show_error("Please save LoTW credentials first")
+            return
+        
+        # Show progress
+        self.lotw_download_button.disabled = True
+        self.lotw_download_button.text = "Downloading..."
+        self.lotw_download_button.update()
+        
+        try:
+            from backend.lotw_vucc import download_and_parse_ffma
+            from datetime import datetime
+            
+            success, result = download_and_parse_ffma(username, password)
+            
+            if success:
+                # Update status
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                set_last_vucc_update(timestamp)
+                self.lotw_status_text.value = f"Last updated: {timestamp}"
+                self.lotw_status_text.update()
+                
+                # Show success
+                total = result.get('total_worked', 0)
+                pct = result.get('completion_pct', 0)
+                
+                self.page.snack_bar = ft.SnackBar(
+                    content=ft.Text(f"Success! {total}/488 FFMA grids confirmed ({pct}%)"),
+                    bgcolor=ft.Colors.GREEN_400,
+                )
+                self.page.snack_bar.open = True
+                self.page.update()
+            else:
+                self._show_error(f"Download failed: {result}")
+        
+        except Exception as ex:
+            self._show_error(f"Error: {str(ex)}")
+        
+        finally:
+            # Re-enable button
+            self.lotw_download_button.disabled = False
+            self.lotw_download_button.text = "Download VUCC Data"
+            self.lotw_download_button.update()
+    
+    def _download_challenge_data(self, e):
+        """Download Challenge data from LoTW"""
+        from backend.config import get_lotw_username, get_lotw_password, set_last_challenge_update, get_last_challenge_update
+        
+        username = get_lotw_username()
+        password = get_lotw_password()
+        
+        if not username or not password:
+            self._show_error("Please save LoTW credentials first")
+            return
+        
+        # Show progress
+        self.challenge_download_button.disabled = True
+        self.challenge_download_button.text = "Downloading..."
+        self.challenge_download_button.update()
+        
+        try:
+            from backend.lotw_challenge import download_and_parse_challenge
+            from datetime import datetime
+            
+            # Get last update date for incremental download
+            last_update = get_last_challenge_update()
+            since_date = last_update.split()[0] if last_update else None  # Extract date part
+            
+            success, result = download_and_parse_challenge(username, password, since_date)
+            
+            if success:
+                # Update status
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                set_last_challenge_update(timestamp)
+                self.challenge_status_text.value = f"Last updated: {timestamp}"
+                self.challenge_status_text.update()
+                
+                # Show success
+                total_entities = result.get('total_entities', 0)
+                total_slots = result.get('total_challenge_slots', 0)
+                
+                self.page.snack_bar = ft.SnackBar(
+                    content=ft.Text(f"Success! {total_entities} entities, {total_slots} total slots"),
+                    bgcolor=ft.Colors.GREEN_400,
+                )
+                self.page.snack_bar.open = True
+                self.page.update()
+            else:
+                self._show_error(f"Download failed: {result}")
+        
+        except Exception as ex:
+            self._show_error(f"Error: {str(ex)}")
+        
+        finally:
+            # Re-enable button
+            self.challenge_download_button.disabled = False
+            self.challenge_download_button.text = "Download Challenge Data"
+            self.challenge_download_button.update()
+    
+    def _show_error(self, message):
+        """Show error snackbar"""
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text(message),
+            bgcolor=ft.Colors.RED_400,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+    
+    def set_connection_state(self, connected: bool):
+        """Update UI based on connection state (called from main UI)"""
+        self.is_connected = connected
+        if connected:
+            self.connect_button.text = "Disconnect"
+            self.connect_button.icon = ft.Icons.LINK_OFF
+        else:
+            self.connect_button.text = "Connect"
+            self.connect_button.icon = ft.Icons.LINK
+        try:
+            self.connect_button.update()
+        except:
+            pass

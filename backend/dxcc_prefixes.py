@@ -8,6 +8,77 @@ from pathlib import Path
 import json
 import re
 
+# Manual overrides for entities that don't match between LoTW and CTY.DAT
+MANUAL_OVERRIDES = {
+    "10": "PA",      # Amsterdam & Saint Paul Islands
+    "20": "BS7",     # Scarborough Reef
+    "23": "KH1",     # Baker & Howland Islands
+    "24": "KG4",     # Guantanamo Bay
+    "26": "Z6",      # Kosovo
+    "28": "KZ5",     # Canal Zone (deleted)
+    "32": "EA9",     # Ceuta & Melilla
+    "34": "VQ9",     # Chagos Islands
+    "35": "ZL7",     # Chatham Islands
+    "36": "VK9X",    # Christmas Island
+    "37": "FO",      # Clipperton Island
+    "38": "VK9C",    # Cocos (Keeling) Islands
+    "40": "CU",      # Azores
+    "41": "XX9",     # Ducie Island
+    "42": "FP",      # Saint Pierre & Miquelon
+    "43": "P5",      # DPR of Korea
+    "44": "T31",     # Central Kiribati (Canton & Enderbury)
+    "45": "VK9N",    # Norfolk Island
+    "46": "JD/o",    # Ogasawara
+    "47": "VK9M",    # Mellish Reef
+    "48": "ZK3",     # Tokelau Islands
+    "49": "VK9W",    # Willis Island
+    "50": "ZL9",     # Auckland & Campbell Islands
+    "51": "VK",      # Heard Island
+    "52": "VP8/s",   # South Sandwich Islands
+    "53": "VK0H",    # Macquarie Island
+    "54": "VP8",     # Falkland Islands
+    "55": "XR0",     # San Felix & San Ambrosio
+    "56": "CE9",     # Juan Fernandez Islands
+    "57": "3Y",      # Peter 1 Island
+    "58": "3Y",      # Bouvet
+    "59": "TI9",     # Cocos Island
+    "60": "FO",      # Marquesas Islands
+    "61": "ZK1",     # South Cook Islands
+    "62": "ZK1",     # North Cook Islands
+    "63": "FO",      # Austral Islands
+    "64": "VP6",     # Pitcairn Island
+    "65": "FO",      # Tuamotu Archipelago
+    "66": "T33",     # Banaba Island (Ocean Island)
+    "67": "H40",     # Temotu Province
+    "68": "VK9L",    # Lord Howe Island
+    "69": "T2",      # Tuvalu
+    "70": "VK4",     # Mellish Reef
+    "131": "FT5Z",   # Kerguelen Islands
+    "133": "FT5X",   # Kermadec Island
+    "134": "KH5K",   # Kingman Reef
+    "136": "VK9",    # Cocos (Keeling) Islands
+    "137": "SV/a",   # Mount Athos
+    "138": "KH7K",   # Kure Island
+    "139": "JD/m",   # Minami Torishima
+    "151": "4K2",    # Malyj Vysotskij Island
+    "201": "VY0",    # Prince Edward & Marion Islands
+    "85": "PJ",      # Bonaire, Curacao (Neth Antilles)
+    "97": "J6",      # Saint Lucia
+    "98": "J8",      # Saint Vincent
+    "99": "FR",      # Glorioso Island
+    "213": "FS",     # Saint Martin
+    "218": "OK",     # Czechoslovakia (deleted)
+    "226": "HZ",     # Saudi Arabia/Iraq Neutral Zone (deleted)
+    "229": "Y2",     # German Democratic Republic (deleted)
+    "230": "DL",     # Federal Republic of Germany
+    "246": "1A",     # Sovereign Military Order of Malta
+    "250": "ZD7",    # Saint Helena
+    "255": "PJ",     # Sint Maarten, Saba, Saint Eustatius
+    "293": "3W",     # Viet Nam
+    "516": "FJ",     # Saint Barthelemy
+}
+
+
 
 def parse_cty_dat():
     """Parse CTY.DAT and extract all DXCC entities with their prefixes"""
@@ -19,41 +90,30 @@ def parse_cty_dat():
     
     text = cty_file.read_text(encoding='utf-8', errors='ignore')
     
-    # Parse each country block
+    # Parse each country - look for header lines with 8+ colons
     # Format: Country Name: CQ: ITU: Continent: Lat: Lon: GMT: DXCC_PREFIX:
-    #         prefix1,prefix2,=EXACTCALL,...;
     
     entities = {}  # dxcc_prefix -> country_name
     
-    # Split by double newlines to get country blocks
-    blocks = re.split(r'\r?\n\r?\n', text)
-    
-    for block in blocks:
-        if not block.strip():
+    for line in text.split('\n'):
+        line = line.strip()
+        if not line:
             continue
         
-        lines = block.strip().split('\n')
-        if not lines:
-            continue
-        
-        # Parse header line
-        header = lines[0].strip()
-        
-        # Remove \r if present
-        header = header.replace('\r', '')
-        
-        parts = header.split(':')
-        
-        if len(parts) >= 8:
-            country_name = parts[0].strip()
-            dxcc_prefix = parts[7].strip()
-            
-            # Special handling for deleted entities (marked with * or =)
-            if dxcc_prefix.startswith('*') or dxcc_prefix.startswith('='):
-                dxcc_prefix = dxcc_prefix[1:]
-            
-            if country_name and dxcc_prefix:
-                entities[dxcc_prefix] = country_name
+        # Check if this is a header line (has 8+ colons and ends with colon)
+        if line.count(':') >= 8 and line.endswith(':'):
+            # Parse this header
+            parts = line.split(':')
+            if len(parts) >= 8:
+                country_name = parts[0].strip()
+                dxcc_prefix = parts[7].strip()
+                
+                # Special handling for deleted entities (marked with * or =)
+                if dxcc_prefix.startswith('*') or dxcc_prefix.startswith('='):
+                    dxcc_prefix = dxcc_prefix[1:]
+                
+                if country_name and dxcc_prefix:
+                    entities[dxcc_prefix] = country_name
     
     return entities
 
@@ -95,6 +155,11 @@ def build_dxcc_number_to_prefix_mapping():
     unmatched = []
     
     for dxcc_num, lotw_country in lotw_mapping.items():
+        # Check manual overrides first
+        if dxcc_num in MANUAL_OVERRIDES:
+            dxcc_to_prefix[dxcc_num] = MANUAL_OVERRIDES[dxcc_num]
+            continue
+        
         lotw_norm = normalize(lotw_country)
         
         # Try exact match first
@@ -127,6 +192,8 @@ def build_dxcc_number_to_prefix_mapping():
             unmatched.append(f"{dxcc_num}: {lotw_country}")
     
     print(f"\nMatched {len(dxcc_to_prefix)} out of {len(lotw_mapping)} entities")
+    print(f"  - {len([d for d in dxcc_to_prefix if d in MANUAL_OVERRIDES])} from manual overrides")
+    print(f"  - {len([d for d in dxcc_to_prefix if d not in MANUAL_OVERRIDES])} from automatic matching")
     
     if unmatched:
         print(f"\nUnmatched entities ({len(unmatched)}):")

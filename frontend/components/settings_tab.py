@@ -4,7 +4,8 @@ import asyncio
 from backend.config import (
     get_user_callsign, get_user_grid, set_user_settings,
     get_cluster_servers, get_current_server, set_current_server,
-    get_auto_connect, set_auto_connect
+    get_auto_connect, set_auto_connect,
+    get_blocked_spotters, set_blocked_spotters
 )
 from backend.grid_utils import validate_grid
 from backend.cluster_async import start_connection, stop_connection
@@ -13,11 +14,12 @@ from backend.cluster_async import start_connection, stop_connection
 class SettingsTab(ft.Column):
     """Settings tab for user configuration and cluster controls"""
     
-    def __init__(self, page, on_settings_changed, initial_connection_state=False):
+    def __init__(self, page, on_settings_changed, initial_connection_state=False, challenge_table=None):
         super().__init__()
         self.page = page
         self.on_settings_changed = on_settings_changed
         self.is_connected = initial_connection_state  # Set based on auto-connect
+        self.challenge_table = challenge_table  # Store reference for auto-refresh
         
         # User settings section
         self.callsign_field = ft.TextField(
@@ -87,6 +89,31 @@ class SettingsTab(ft.Column):
             size=14,
         )
         
+        # Blocked spotters section
+        blocked = get_blocked_spotters()
+        self.blocked_spotters_field = ft.TextField(
+            label="Blocked Spotters",
+            hint_text="Enter callsigns separated by commas (e.g., RBN,K3LR-2,DX-SKIMMER)",
+            value=', '.join(blocked) if blocked else '',
+            width=500,
+        )
+        
+        self.blocked_count_text = ft.Text(
+            f"Currently blocking {len(blocked)} spotter(s)",
+            size=12,
+            color=ft.Colors.BLUE_GREY_400,
+        )
+        
+        self.save_blocked_button = ft.ElevatedButton(
+            text="Save Blocked List",
+            on_click=self._save_blocked_spotters,
+        )
+        
+        self.clear_blocked_button = ft.ElevatedButton(
+            text="Clear All",
+            on_click=self._clear_blocked_spotters,
+        )
+        
         # LoTW credentials section
         from backend.config import get_lotw_username, get_lotw_password, get_last_vucc_update
         
@@ -120,6 +147,22 @@ class SettingsTab(ft.Column):
         last_update = get_last_vucc_update()
         self.lotw_status_text = ft.Text(
             f"Last updated: {last_update if last_update else 'Never'}",
+            size=12,
+            color=ft.Colors.BLUE_GREY_400,
+        )
+        
+        # Challenge data download section
+        from backend.config import get_last_challenge_update
+        
+        self.challenge_download_button = ft.ElevatedButton(
+            text="Download Challenge Data",
+            icon=ft.Icons.DOWNLOAD,
+            on_click=self._download_challenge_data,
+        )
+        
+        last_challenge_update = get_last_challenge_update()
+        self.challenge_status_text = ft.Text(
+            f"Last updated: {last_challenge_update if last_challenge_update else 'Never'}",
             size=12,
             color=ft.Colors.BLUE_GREY_400,
         )
@@ -170,6 +213,32 @@ class SettingsTab(ft.Column):
             ft.Text("Display Settings", size=20, weight=ft.FontWeight.BOLD),
             ft.Divider(),
             
+            ft.Container(height=40),
+            ft.Text("Block Spotters", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Text(
+                "Block spots from specific spotters (useful for RBN, Skimmers, or problem spotters)",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=10),
+            
+            self.blocked_spotters_field,
+            self.blocked_count_text,
+            
+            ft.Row([
+                self.save_blocked_button,
+                self.clear_blocked_button,
+            ], spacing=10),
+            
+            ft.Text(
+                "Tip: Common blocks: RBN, DX-SKIMMER, or specific Skimmer callsigns like K3LR-2",
+                size=12,
+                color=ft.Colors.ORANGE_400,
+            ),
+            
             self.needed_spot_label,
             self.needed_spot_slider,
             ft.Text(
@@ -213,6 +282,36 @@ class SettingsTab(ft.Column):
                 "Note: Password is stored in config.ini. Download fetches 6m confirmations for FFMA.",
                 size=12,
                 color=ft.Colors.ORANGE_400,
+            ),
+            
+            ft.Container(height=40),
+            ft.Text("Challenge Data (All Bands)", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Text(
+                "Download DXCC Challenge confirmations from LoTW (includes 60m)",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=10),
+            
+            self.challenge_download_button,
+            self.challenge_status_text,
+            
+            ft.Text(
+                "Note: First download may be 15-22 MB. Subsequent updates are incremental (much smaller).",
+                size=12,
+                color=ft.Colors.ORANGE_400,
+            ),
+            
+            ft.Container(height=5),
+            
+            ft.Text(
+                "⚠️ Paper QSL cards (ARRL desk-checked) will NOT appear in LoTW downloads.",
+                size=12,
+                color=ft.Colors.YELLOW_600,
+                italic=True,
             ),
         ]
         
@@ -401,6 +500,113 @@ class SettingsTab(ft.Column):
             self.lotw_download_button.disabled = False
             self.lotw_download_button.text = "Download VUCC Data"
             self.lotw_download_button.update()
+    
+    def _download_challenge_data(self, e):
+        """Download Challenge data from LoTW"""
+        from backend.config import get_lotw_username, get_lotw_password, set_last_challenge_update, get_last_challenge_update
+        
+        username = get_lotw_username()
+        password = get_lotw_password()
+        
+        if not username or not password:
+            self._show_error("Please save LoTW credentials first")
+            return
+        
+        # Show progress
+        self.challenge_download_button.disabled = True
+        self.challenge_download_button.text = "Downloading..."
+        self.challenge_download_button.update()
+        
+        try:
+            from backend.lotw_challenge import download_and_parse_challenge
+            from backend.config import get_user_callsign
+            from datetime import datetime
+            
+            # Get callsign for filtering
+            callsign = get_user_callsign().split('-')[0]  # Strip suffix if present
+            
+            # Get last update date for incremental download
+            last_update = get_last_challenge_update()
+            since_date = last_update.split()[0] if last_update else None  # Extract date part
+            
+            # Always start from 2000-01-01 for first download
+            start_date = "2000-01-01" if not since_date else None
+            
+            success, result = download_and_parse_challenge(username, password, since_date, start_date, callsign)
+            
+            if success:
+                # Update status
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                set_last_challenge_update(timestamp)
+                self.challenge_status_text.value = f"Last updated: {timestamp}"
+                self.challenge_status_text.update()
+                
+                # Show success
+                total_entities = result.get('total_entities', 0)
+                total_slots = result.get('total_challenge_slots', 0)
+                
+                self.page.snack_bar = ft.SnackBar(
+                    content=ft.Text(f"Success! {total_entities} entities, {total_slots} total slots"),
+                    bgcolor=ft.Colors.GREEN_400,
+                )
+                self.page.snack_bar.open = True
+                self.page.update()
+                
+                # Auto-refresh Challenge table
+                if self.challenge_table:
+                    try:
+                        self.challenge_table.refresh()
+                        print("Challenge table refreshed after download")
+                    except Exception as e:
+                        print(f"Error refreshing challenge table: {e}")
+            else:
+                self._show_error(f"Download failed: {result}")
+        
+        except Exception as ex:
+            self._show_error(f"Error: {str(ex)}")
+        
+        finally:
+            # Re-enable button
+            self.challenge_download_button.disabled = False
+            self.challenge_download_button.text = "Download Challenge Data"
+            self.challenge_download_button.update()
+    
+    def _save_blocked_spotters(self, e):
+        """Save blocked spotters list"""
+        text = self.blocked_spotters_field.value.strip()
+        
+        if not text:
+            spotters = []
+        else:
+            spotters = [s.strip().upper() for s in text.split(',') if s.strip()]
+        
+        set_blocked_spotters(spotters)
+        
+        self.blocked_count_text.value = f"Currently blocking {len(spotters)} spotter(s)"
+        self.blocked_count_text.update()
+        
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text(f"Saved {len(spotters)} blocked spotter(s)"),
+            bgcolor=ft.Colors.GREEN_400,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+    
+    def _clear_blocked_spotters(self, e):
+        """Clear all blocked spotters"""
+        set_blocked_spotters([])
+        self.blocked_spotters_field.value = ''
+        self.blocked_count_text.value = "Currently blocking 0 spotter(s)"
+        
+        self.blocked_spotters_field.update()
+        self.blocked_count_text.update()
+        
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text("Cleared all blocked spotters"),
+            bgcolor=ft.Colors.GREEN_400,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
     
     def _show_error(self, message):
         """Show error snackbar"""

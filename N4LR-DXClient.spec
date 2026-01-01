@@ -5,7 +5,7 @@ a = Analysis(
     ['run.py'],
     pathex=[],
     binaries=[],
-    datas=[('cty.dat', '.'), ('dxcc_mapping.json', '.'), ('challenge_data.json', '.')],
+    datas=[('cty.dat', '.'), ('ffma_grids.json', '.'), ('dxcc_mapping.json', '.'), ('dxcc_prefixes.json', '.'), ('challenge_data.json', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -161,3 +161,34 @@ def set_last_vucc_update(timestamp):
         config['lotw'] = {}
     config['lotw']['last_vucc_update'] = timestamp
     save_config(config)
+    
+def get_last_challenge_update():
+    """Get last Challenge data update timestamp"""
+    config = load_config()
+    return config.get('lotw', 'last_challenge_update', fallback='')
+
+def set_last_challenge_update(timestamp):
+    """Set last Challenge data update timestamp"""
+    config = load_config()
+    if 'lotw' not in config:
+        config['lotw'] = {}
+    config['lotw']['last_challenge_update'] = timestamp
+    save_config(config)
+    
+def get_blocked_spotters():
+    """Get list of blocked spotter callsigns"""
+    config = load_config()
+    blocked_str = config.get('filters', 'blocked_spotters', fallback='')
+    if not blocked_str:
+        return []
+    # Split by comma and clean up
+    blocked = [s.strip().upper() for s in blocked_str.split(',')]
+    return [s for s in blocked if s]  # Remove empty strings
+
+def set_blocked_spotters(spotters_list):
+    """Set blocked spotter callsigns"""
+    config = load_config()
+    if 'filters' not in config:
+        config['filters'] = {}
+    config['filters']['blocked_spotters'] = ','.join(spotters_list)
+    save_config(config)

@@ -218,10 +218,14 @@ class MainUI(ft.Column):
         ], expand=True)
 
         # Build Settings tab
+        # Create challenge tab first so we can pass reference to settings
+        self.challenge_table = ChallengeTable()
+        
         settings_tab_content = SettingsTab(
             page=self.page,
             on_settings_changed=self._on_settings_changed,
-            initial_connection_state=get_auto_connect()
+            initial_connection_state=get_auto_connect(),
+            challenge_table=self.challenge_table  # Pass reference for auto-refresh
         )
         
         # FFMA tab
@@ -230,8 +234,6 @@ class MainUI(ft.Column):
             icon=ft.Icons.GRID_4X4,
             content=FFMATable(),
         )
-        
-        challenge_tab_content = ChallengeTable()
 
         # Create tabs
         self.tabs = ft.Tabs(
@@ -246,7 +248,7 @@ class MainUI(ft.Column):
                 ft.Tab(
                     text="Challenge",
                     icon=ft.Icons.EMOJI_EVENTS,  # Trophy icon
-                    content=challenge_tab_content,
+                    content=self.challenge_table,  # Use stored reference
                 ),
                 ft.Tab(
                     text="FFMA",
@@ -290,6 +292,13 @@ class MainUI(ft.Column):
             refresh_if_needed()  # Downloads if cache old or missing
         except Exception as e:
             print(f"LoTW initialization failed: {e}")
+        
+        # Initialize DXCC lookup (prefix -> DXCC number)
+        try:
+            from backend.dxcc_lookup import initialize as init_dxcc_lookup
+            init_dxcc_lookup()
+        except Exception as e:
+            print(f"DXCC lookup initialization failed: {e}")
                 
              
     # ------------------------------------------------------------
