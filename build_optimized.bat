@@ -32,6 +32,8 @@ pyinstaller ^
     --add-data "dxcc_mapping.json;." ^
     --add-data "dxcc_prefixes.json;." ^
     --add-data "challenge_data.json;." ^
+	--add-data "dxcc_entities.json;." ^
+	--add-data "dxcc_name_overrides.json;." ^
     run.py
 
 echo.

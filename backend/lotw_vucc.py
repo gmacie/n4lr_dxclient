@@ -8,9 +8,10 @@ import requests
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlencode
+import time
 
 
-def download_vucc_qsos(username, password, band="6m", since_date=None):
+def download_vucc_qsos(username, password, band="6m", since_date=None, progress_callback=None):
     """
     Download confirmed QSOs from LoTW for a specific band
     
@@ -19,30 +20,19 @@ def download_vucc_qsos(username, password, band="6m", since_date=None):
         password: LoTW password
         band: Band to download (e.g., "6m", "2m", "70cm")
         since_date: Optional - only download QSOs confirmed after this date (YYYY-MM-DD)
+        progress_callback: Optional function(message: str) to report progress
     
     Returns:
         tuple: (success: bool, adif_text: str or error_message: str)
     """
-    
-    # Build query parameters
-    #params = {
-    #    'login': username,
-    #    'password': password,
-    #    'qso_qsl': 'yes',  # Only confirmed QSOs
-    #    'qso_query': '1',  # Include QSO records
-    #    'qso_band': band,
-    #    'qso_qslinc': 'yes',
-    #    'qso_qsldetail': 'yes'
-    #    'qso_mydetail': 'yes',
-    #    'qso_qso': 'no',
-    #}
     
     params = {
         'login': username,
         'password': password,
         'qso_query': '1',
         'qso_qsl': 'yes',
-        'qso_qsldetail': 'yes',  # This might be the one instead of qso_qslinc
+        'qso_qsldetail': 'yes',
+        'qso_mydetail': 'yes',
         'qso_band': band,
     }
     
@@ -58,16 +48,59 @@ def download_vucc_qsos(username, password, band="6m", since_date=None):
     if since_date:
         print(f"Since: {since_date}")
     
+    if progress_callback:
+        progress_callback("Connecting to LoTW...")
+        time.sleep(0.5)
+    
     try:
-        # Make request
-        response = requests.get(url, timeout=60)
+        # Make request with streaming
+        if progress_callback:
+            progress_callback("Downloading...")
+            time.sleep(0.5)
+        
+        response = requests.get(url, timeout=60, stream=True)
         
         # Check for errors
         if response.status_code != 200:
             return False, f"HTTP Error {response.status_code}"
         
+        # Download with progress tracking
+        chunks = []
+        downloaded_bytes = 0
+        last_update = 0
+        
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                chunks.append(chunk)
+                downloaded_bytes += len(chunk)
+                
+                # Update progress every 100KB
+                if progress_callback and downloaded_bytes - last_update > 100000:
+                    mb = downloaded_bytes / 1024 / 1024
+                    progress_callback(f"Downloading... {mb:.1f} MB")
+                    last_update = downloaded_bytes
+        
+        # Combine chunks
+        text = b''.join(chunks).decode('utf-8')
+        
+        # Calculate final size and report
+        size_kb = len(text) / 1024
+        size_mb = size_kb / 1024
+        
+        if size_mb > 1:
+            size_str = f"{size_mb:.1f} MB"
+            print(f"Downloaded {size_str}")
+            if progress_callback:
+                progress_callback(f"Downloaded {size_str}")
+                time.sleep(0.5)
+        else:
+            size_str = f"{size_kb:.1f} KB"
+            print(f"Downloaded {size_str}")
+            if progress_callback:
+                progress_callback(f"Downloaded {size_str}")
+                time.sleep(0.5)
+        
         # Check if login failed (LoTW returns HTML on auth failure)
-        text = response.text
         if '<html' in text.lower() or 'login' in text.lower()[:200]:
             return False, "Authentication failed - check username/password"
         
@@ -75,7 +108,6 @@ def download_vucc_qsos(username, password, band="6m", since_date=None):
         if '<CALL:' not in text.upper() and '<EOR>' not in text.upper():
             return False, "No data returned - check credentials or band"
         
-        print(f"Downloaded {len(text)} bytes")
         return True, text
         
     except requests.Timeout:
@@ -97,16 +129,21 @@ def save_vucc_adif(adif_text, filename="vucc_6m.adi"):
         return False
 
 
-def download_and_parse_ffma(username, password):
+def download_and_parse_ffma(username, password, progress_callback=None):
     """
     Download 6m VUCC data and parse for FFMA grids
+    
+    Args:
+        username: LoTW username
+        password: LoTW password
+        progress_callback: Optional function to report progress
     
     Returns:
         tuple: (success: bool, worked_grids: dict or error_message: str)
     """
     
     # Download 6m confirmations
-    success, result = download_vucc_qsos(username, password, band="6m")
+    success, result = download_vucc_qsos(username, password, band="6m", progress_callback=progress_callback)
     
     if not success:
         return False, result
@@ -116,11 +153,21 @@ def download_and_parse_ffma(username, password):
     save_vucc_adif(result, adif_file)
     
     # Parse for FFMA grids
+    if progress_callback:
+        progress_callback("Parsing FFMA grids...")
+        time.sleep(0.5)
+    
     from backend.ffma_tracking import parse_lotw_adif_for_ffma, save_ffma_data
     
     try:
         worked_grids = parse_lotw_adif_for_ffma(adif_file)
         ffma_data = save_ffma_data(worked_grids)
+        
+        if progress_callback:
+            total = len(worked_grids)
+            pct = ffma_data.get("completion_pct", 0)
+            progress_callback(f"Complete! {total}/488 grids ({pct}%)")
+            time.sleep(0.5)
         
         return True, {
             "worked_grids": worked_grids,

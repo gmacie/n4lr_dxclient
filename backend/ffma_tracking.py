@@ -8,6 +8,16 @@ from pathlib import Path
 import json
 from datetime import datetime
 
+import sys
+
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        base_path = Path(sys._MEIPASS)
+    except Exception:
+        base_path = Path.cwd()
+    return base_path / relative_path
+
 # Official 488 FFMA grids (extracted from ARRL LOTW)
 FFMA_GRIDS = None  # Loaded from ffma_grids.json
 
@@ -19,7 +29,8 @@ def load_ffma_grids():
     if FFMA_GRIDS is not None:
         return FFMA_GRIDS
     
-    grids_file = Path("ffma_grids.json")
+    grids_file = get_resource_path("ffma_grids.json")
+    #grids_file = Path("ffma_grids.json")
     if grids_file.exists():
         try:
             FFMA_GRIDS = set(json.loads(grids_file.read_text()))
@@ -54,11 +65,24 @@ def is_ffma_grid(grid):
     return normalized in grids if normalized else False
 
 
-def parse_lotw_adif_for_ffma(adif_file_path):
+def parse_lotw_adif_for_ffma(adif_file_path, home_grid=None):
     """
     Parse LoTW ADIF file for 6m confirmations with grids
     Returns dict: {grid: {"call": callsign, "date": qso_date}}
     """
+    
+    # Get home grid from config if not provided
+    if home_grid is None:
+        try:
+            from backend.config import get_user_grid
+            home_grid = get_user_grid()
+        except:
+            home_grid = None
+    
+    # Normalize home grid to 4 characters
+    if home_grid:
+        home_grid = home_grid.strip().upper()[:4]
+        print(f"Filtering FFMA QSOs to only those from home grid: {home_grid}")
     
     adif_path = Path(adif_file_path)
     if not adif_path.exists():
@@ -78,6 +102,7 @@ def parse_lotw_adif_for_ffma(adif_file_path):
     
     # Parse ADIF records
     worked_grids = {}
+    skipped_other_grids = 0
     
     # Split by <EOR> or <eor>
     records = text.upper().split('<EOR>')
@@ -102,23 +127,23 @@ def parse_lotw_adif_for_ffma(adif_file_path):
         # Check if this is a 6m QSO with a grid
         band = fields.get('BAND', '')
         grid = fields.get('GRIDSQUARE', '')
+        vucc_grids = fields.get('VUCC_GRIDS', '')  # Multi-grid activations
         call = fields.get('CALL', '')
         qso_date = fields.get('QSO_DATE', '')
+        my_grid = fields.get('MY_GRIDSQUARE', '') 
         
         # Only process 6m QSOs
         if band != '6M':
             continue
         
-        # Normalize grid
-        norm_grid = normalize_grid(grid)
-        if not norm_grid:
-            continue
+        # Filter by home grid if specified  # ADD THESE LINES
+        if home_grid and my_grid:
+            my_grid_4char = my_grid[:4] if len(my_grid) >= 4 else my_grid
+            if my_grid_4char != home_grid:
+                skipped_other_grids += 1
+                continue
         
-        # Check if it's an FFMA grid
-        if norm_grid not in ffma_grids:
-            continue
-        
-        # Parse date (YYYYMMDD format)
+        # Parse date (YYYYMMDD format) - do this BEFORE grid processing
         try:
             if qso_date and len(qso_date) == 8:
                 date_obj = datetime.strptime(qso_date, '%Y%m%d')
@@ -128,14 +153,39 @@ def parse_lotw_adif_for_ffma(adif_file_path):
         except:
             date_str = qso_date or 'Unknown'
         
-        # Store the first/earliest QSO for each grid
-        if norm_grid not in worked_grids:
-            worked_grids[norm_grid] = {
-                "call": call,
-                "date": date_str,
-            }
+        # Process all grids (VUCC_GRIDS takes priority if present)
+        grids_to_process = []
+        
+        if vucc_grids:
+            # Multi-grid activation: "CM79XX,CM89AX,CN70XA,CN80AA"
+            grid_list = [g.strip() for g in vucc_grids.split(',')]
+            grids_to_process = grid_list
+        elif grid:
+            # Single grid
+            grids_to_process = [grid]
+        
+        # Process each grid
+        for g in grids_to_process:
+            norm_grid = normalize_grid(g)
+            if not norm_grid:
+                continue
+            
+            # Check if it's an FFMA grid
+            if norm_grid not in ffma_grids:
+                continue
+            
+            # Store the first/earliest QSO for each grid
+            if norm_grid not in worked_grids:
+                worked_grids[norm_grid] = {
+                    "call": call,
+                    "date": date_str,
+                }
     
-    print(f"Found {len(worked_grids)} FFMA grids worked on 6m")
+    if home_grid and skipped_other_grids > 0:
+        print(f"Skipped {skipped_other_grids} QSOs from other grids (not {home_grid})")
+    
+    print(f"Found {len(worked_grids)} FFMA grids worked on 6m from {home_grid if home_grid else 'all grids'}")
+    
     return worked_grids
 
 

@@ -9,9 +9,10 @@ import json
 from pathlib import Path
 from datetime import datetime
 import re
+import time
 
 
-def download_challenge_qsos(username, password, since_date=None, start_date=None, callsign=None):
+def download_challenge_qsos(username, password, since_date=None, start_date=None, callsign=None, progress_callback=None):
     """
     Download Challenge confirmations from LoTW
     
@@ -21,6 +22,7 @@ def download_challenge_qsos(username, password, since_date=None, start_date=None
         since_date: Optional YYYY-MM-DD for incremental update
         start_date: Optional YYYY-MM-DD for earliest QSO date
         callsign: Optional callsign filter (e.g., N4LR)
+        progress_callback: Optional function(message: str) to report progress
         
     Returns:
         tuple: (success, adif_text or error_message)
@@ -52,8 +54,14 @@ def download_challenge_qsos(username, password, since_date=None, start_date=None
     if since_date:
         params["qso_qslsince"] = since_date
         print(f"Downloading Challenge data since {since_date}...")
+        if progress_callback:
+            progress_callback(f"Downloading updates since {since_date}...")
+            time.sleep(0.5)
     else:
         print("Downloading full Challenge data (first time)...")
+        if progress_callback:
+            progress_callback("Downloading Challenge data (this may take 1-2 minutes)...")
+            time.sleep(0.5)
     
     try:
         # Debug: show the full URL
@@ -61,17 +69,61 @@ def download_challenge_qsos(username, password, since_date=None, start_date=None
         full_url = f"{url}?{urlencode(params)}"
         print(f"\nAPI URL: {full_url}\n")
         
-        response = requests.get(url, params=params, timeout=120)
+        if progress_callback:
+            progress_callback("Connecting to LoTW...")
+            time.sleep(0.5)
+        
+        # Make request with streaming
+        if progress_callback:
+            progress_callback("Downloading...")
+            time.sleep(0.5)
+        
+        response = requests.get(url, params=params, timeout=300, stream=True)
         
         if response.status_code != 200:
             return False, f"HTTP {response.status_code}"
         
+        # Download with progress tracking
+        chunks = []
+        downloaded_bytes = 0
+        last_update = 0
+        
+        for chunk in response.iter_content(chunk_size=8192):
+            if chunk:
+                chunks.append(chunk)
+                downloaded_bytes += len(chunk)
+                
+                # Update progress every 500KB (more frequent for larger file)
+                if progress_callback and downloaded_bytes - last_update > 500000:
+                    mb = downloaded_bytes / 1024 / 1024
+                    progress_callback(f"Downloading... {mb:.1f} MB")
+                    last_update = downloaded_bytes
+        
+        # Combine chunks
+        text = b''.join(chunks).decode('utf-8')
+        
+        # Calculate final size and report
+        size_kb = len(text) / 1024
+        size_mb = size_kb / 1024
+        
+        if size_mb > 1:
+            size_str = f"{size_mb:.1f} MB"
+            print(f"Downloaded {size_str}")
+            if progress_callback:
+                progress_callback(f"Downloaded {size_str}")
+                time.sleep(0.5)
+        else:
+            size_str = f"{size_kb:.1f} KB"
+            print(f"Downloaded {size_str}")
+            if progress_callback:
+                progress_callback(f"Downloaded {size_str}")
+                time.sleep(0.5)
+        
         # Check if response is HTML (error page)
-        if response.text.strip().startswith('<'):
+        if text.strip().startswith('<html'):
             return False, "Authentication failed or LoTW error"
         
-        print(f"Downloaded {len(response.text)} bytes")
-        return True, response.text
+        return True, text
         
     except requests.exceptions.Timeout:
         return False, "Download timeout (try again)"
@@ -230,7 +282,7 @@ def save_challenge_data(data, filename="challenge_data.json"):
         return False
 
 
-def download_and_parse_challenge(username, password, since_date=None, start_date="2000-01-01", callsign=None):
+def download_and_parse_challenge(username, password, since_date=None, start_date="2000-01-01", callsign=None, progress_callback=None):
     """
     Complete workflow: download from LoTW and parse Challenge data
     
@@ -240,13 +292,14 @@ def download_and_parse_challenge(username, password, since_date=None, start_date
         since_date: Optional YYYY-MM-DD for incremental update
         start_date: Optional YYYY-MM-DD for earliest QSO date (default: 2000-01-01)
         callsign: Optional callsign filter (e.g., N4LR)
+        progress_callback: Optional function to report progress
         
     Returns:
         tuple: (success, result_dict or error_message)
     """
     
     # Download from LoTW
-    success, result = download_challenge_qsos(username, password, since_date, start_date, callsign)
+    success, result = download_challenge_qsos(username, password, since_date, start_date, callsign, progress_callback=progress_callback)
     
     if not success:
         return False, result
@@ -272,10 +325,20 @@ def download_and_parse_challenge(username, password, since_date=None, start_date
                 print("Could not load existing data, doing full parse")
     
     # Parse ADIF
+    if progress_callback:
+        progress_callback("Parsing Challenge data...")
+        time.sleep(0.5)
+    
     challenge_data = parse_challenge_adif(adif_text, existing_data)
     
     # Save to file
     if save_challenge_data(challenge_data):
+        if progress_callback:
+            entities = challenge_data.get('total_entities', 0)
+            slots = challenge_data.get('total_challenge_slots', 0)
+            progress_callback(f"Complete! {entities} entities, {slots} slots")
+            time.sleep(0.5)
+        
         return True, challenge_data
     else:
         return False, "Failed to save challenge data"

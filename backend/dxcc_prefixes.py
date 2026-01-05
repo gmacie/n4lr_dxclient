@@ -8,6 +8,16 @@ from pathlib import Path
 import json
 import re
 
+import sys
+
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        base_path = Path(sys._MEIPASS)
+    except Exception:
+        base_path = Path.cwd()
+    return base_path / relative_path
+
 # Manual overrides for entities that don't match between LoTW and CTY.DAT
 MANUAL_OVERRIDES = {
     "10": "PA",      # Amsterdam & Saint Paul Islands
@@ -83,7 +93,7 @@ MANUAL_OVERRIDES = {
 def parse_cty_dat():
     """Parse CTY.DAT and extract all DXCC entities with their prefixes"""
     
-    cty_file = Path("cty.dat")
+    cty_file = get_resource_path("cty.dat")
     if not cty_file.exists():
         print("ERROR: cty.dat not found")
         return {}
@@ -126,7 +136,7 @@ def build_dxcc_number_to_prefix_mapping():
     print(f"Parsed {len(cty_entities)} entities from CTY.DAT")
     
     # Load dxcc_mapping.json (DXCC number -> country name from LoTW)
-    mapping_file = Path("dxcc_mapping.json")
+    mapping_file = get_resource_path("dxcc_mapping.json")
     if not mapping_file.exists():
         print("ERROR: dxcc_mapping.json not found")
         return {}
@@ -209,7 +219,7 @@ def get_prefix(dxcc_num):
     """Get prefix for a DXCC number (uses cached mapping)"""
     if not hasattr(get_prefix, '_cache'):
         # Load from file if it exists, otherwise build it
-        cache_file = Path("dxcc_prefixes.json")
+        cache_file = get_resource_path("dxcc_prefixes.json")
         if cache_file.exists():
             try:
                 get_prefix._cache = json.loads(cache_file.read_text())
@@ -241,7 +251,7 @@ if __name__ == "__main__":
         prefix = mapping.get(dxcc, "???")
         country = ""
         try:
-            lotw_map = json.loads(Path("dxcc_mapping.json").read_text())
+            lotw_map = json.loads(get_resource_path("dxcc_mapping.json").read_text())
             country = lotw_map.get(dxcc, "")
         except:
             pass

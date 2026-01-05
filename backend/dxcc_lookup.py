@@ -7,8 +7,21 @@ import json
 from pathlib import Path
 from typing import Optional, Dict
 
-CTY_FILE = Path("cty.dat")
-DXCC_MAPPING_FILE = Path("dxcc_mapping.json")
+import sys
+
+def get_resource_path(relative_path):
+    """Get absolute path to resource, works for dev and for PyInstaller"""
+    try:
+        base_path = Path(sys._MEIPASS)
+    except Exception:
+        base_path = Path.cwd()
+    return base_path / relative_path
+
+#CTY_FILE = Path("cty.dat")
+#DXCC_MAPPING_FILE = Path("dxcc_mapping.json")
+
+CTY_FILE = get_resource_path("cty.dat")
+DXCC_MAPPING_FILE = get_resource_path("dxcc_mapping.json")
 
 # Global lookup tables
 _prefix_to_country: Dict[str, str] = {}  # VE7CC prefix -> CTY country name

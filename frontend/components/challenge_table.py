@@ -55,6 +55,7 @@ class ChallengeTable(ft.Column):
                 "total_slots": data.get("total_challenge_slots", 0),
                 "entities_by_band": data.get("entities_by_band", {}),
                 "entities": entities,  # entity -> set of bands
+                "raw_band_entity_pairs": data.get("raw_band_entity_pairs", []),
             }
         except Exception as e:
             print(f"Error loading challenge data: {e}")
@@ -64,26 +65,54 @@ class ChallengeTable(ft.Column):
         """Build summary statistics"""
         if not self.challenge_data:
             return ft.Text("No challenge data loaded", size=16, color=ft.Colors.RED)
-        
-        total_entities = self.challenge_data["total_entities"]
+    
+        #total_entities = self.challenge_data["total_entities"]
+        # Use 340 for max (all current DXCC entities), not just worked count
+        all_entities = self._load_all_dxcc_entities()
+        total_entities = len(all_entities)  # Should be 340
+        worked_entities = self.challenge_data["total_entities"] if self.challenge_data else 0
         total_slots = self.challenge_data["total_slots"]
-        max_slots = total_entities * 11  # 11 bands (160m-6m including 60m)
-        
+    
+        # Calculate 60m slots (to exclude from main count)
+        slots_60m = sum(1 for band, dxcc in self.challenge_data.get("raw_band_entity_pairs", []) if band == "60M")
+        slots_no_60m = total_slots - slots_60m  # Subtract 60m, not 6m!
+        max_slots_no_60m = total_entities * 10  # 10 bands (excludes 60m)
+    
+        # Total slots
+        max_slots_total = total_entities * 11  # 11 bands (160m-6m including 60m)
+    
         # Band statistics
         bands_stats = []
         for band in ["160M", "80M", "60M", "40M", "30M", "20M", "17M", "15M", "12M", "10M", "6M"]:
             count = self.challenge_data["entities_by_band"].get(band, 0)
             pct = (count / total_entities * 100) if total_entities > 0 else 0
             bands_stats.append(f"{band}: {count}/{total_entities} ({pct:.0f}%)")
-        
+    
         return ft.Container(
             content=ft.Column([
                 ft.Text("DXCC Challenge Progress", size=24, weight=ft.FontWeight.BOLD),
+                #ft.Text(f"Total Entities: {total_entities}", size=18, weight=ft.FontWeight.BOLD),
                 ft.Row([
-                    ft.Text(f"Total Entities: {total_entities}", size=16),
-                    ft.Text(f"Total Slots: {total_slots}/{max_slots}", size=16),
-                    ft.Text(f"({total_slots/max_slots*100:.1f}% complete)", size=16, color=ft.Colors.GREEN),
-                ], spacing=20),
+                    ft.Text(f"Total Entities: {worked_entities}/{total_entities}", size=18, weight=ft.FontWeight.BOLD),
+                    ft.Text(f"({worked_entities/total_entities*100:.1f}%)", size=18, color=ft.Colors.GREEN),
+                ], spacing=10),
+                ft.Container(height=5),
+            
+                # Slots without 60m
+                ft.Row([
+                    ft.Text(f"Slots: {slots_no_60m}/{max_slots_no_60m}", size=16),
+                    ft.Text("(excludes 60m)", size=12, color=ft.Colors.BLUE_GREY_400),
+                ], spacing=10),
+            
+                # 60m slots (FIXED LABEL)
+                ft.Text(f"60m Slots: {slots_60m}/{total_entities}", size=16),
+            
+                # Total slots
+                ft.Row([
+                    ft.Text(f"Total Slots: {total_slots}/{max_slots_total}", size=16),
+                    ft.Text(f"({total_slots/max_slots_total*100:.1f}% complete)", size=16, color=ft.Colors.GREEN),
+                ], spacing=10),
+            
                 ft.Container(height=10),
                 ft.Text("Band Progress:", size=14, weight=ft.FontWeight.BOLD),
                 ft.Row([
@@ -136,25 +165,36 @@ class ChallengeTable(ft.Column):
         # Load DXCC mapping for country names
         dxcc_mapping = self._load_dxcc_mapping()
         
+        # Get ALL 340 current DXCC entities from dxcc_entities.json
+        all_entities = self._load_all_dxcc_entities()
+        
+        # Create dict of worked entities for quick lookup
+        worked_entities = self.challenge_data["entities"] if self.challenge_data else {}
+        
         # Sort based on current sort_by state
         if self.sort_by == 'country':
             # Sort by country name
             entities_sorted = sorted(
-                self.challenge_data["entities"].items(),
-                key=lambda x: dxcc_mapping.get(str(x[0]), f"Entity {x[0]}"),
+                all_entities.items(),
+                key=lambda x: x[1]["name"],
                 reverse=self.sort_reverse
             )
         else:  # sort by prefix (default)
             # Sort by prefix
             entities_sorted = sorted(
-                self.challenge_data["entities"].items(), 
-                key=lambda x: get_prefix(x[0]),
+                all_entities.items(), 
+                key=lambda x: x[1]["prefix"],
                 reverse=self.sort_reverse
             )
         
-        for entity_num, bands_worked in entities_sorted:
-            country_name = dxcc_mapping.get(str(entity_num), f"Entity {entity_num}")
-            prefix = get_prefix(entity_num)
+        for entity_num_str, entity_data in entities_sorted:
+            entity_num = int(entity_num_str)
+            bands_worked = worked_entities.get(entity_num, set())
+        
+            #country_name = dxcc_mapping.get(str(entity_num), f"Entity {entity_num}")
+            #prefix = get_prefix(entity_num)
+            country_name = entity_data["name"]
+            prefix = entity_data["prefix"]
             
             # Truncate long names
             if len(country_name) > 25:
@@ -198,6 +238,66 @@ class ChallengeTable(ft.Column):
         if mapping_file.exists():
             try:
                 return json.loads(mapping_file.read_text())
+            except:
+                pass
+        return {}
+        
+    def _load_all_dxcc_entities(self):
+        """Load all 340 current DXCC entities from dxcc_entities.json"""
+        entities_file = Path("dxcc_entities.json")
+        if entities_file.exists():
+            try:
+                import json
+                data = json.loads(entities_file.read_text(encoding='utf-8'))
+                
+                # Load name overrides
+                overrides = self._load_name_overrides()
+                
+                # Filter to only current (not deleted) entities
+                current = {}
+                for dxcc_num, entity_data in data.items():
+                    if entity_data.get("current", False):
+                        # Apply name override if exists
+                        if dxcc_num in overrides:
+                            entity_data = entity_data.copy()  # Don't modify original
+                            entity_data["name"] = overrides[dxcc_num]
+                        current[dxcc_num] = entity_data
+                
+                return current
+            except Exception as e:
+                print(f"Error loading dxcc_entities.json: {e}")
+        
+        # Fallback to old method if file doesn't exist
+        return self._load_dxcc_mapping_fallback()
+    
+    def _load_name_overrides(self):
+        """Load DXCC name overrides (ARRL preferred names)"""
+        override_file = Path("dxcc_name_overrides.json")
+        if override_file.exists():
+            try:
+                import json
+                return json.loads(override_file.read_text(encoding='utf-8'))
+            except Exception as e:
+                print(f"Error loading name overrides: {e}")
+        return {}
+    
+    def _load_dxcc_mapping_fallback(self):
+        """Fallback to old dxcc_mapping.json format"""
+        mapping_file = Path("dxcc_mapping.json")
+        if mapping_file.exists():
+            try:
+                import json
+                mapping = json.loads(mapping_file.read_text())
+                
+                # Convert to entity format
+                entities = {}
+                for dxcc_num, name in mapping.items():
+                    entities[dxcc_num] = {
+                        "name": name,
+                        "prefix": get_prefix(int(dxcc_num)),
+                        "current": True
+                    }
+                return entities
             except:
                 pass
         return {}

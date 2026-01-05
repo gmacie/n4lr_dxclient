@@ -41,7 +41,7 @@ def build_status_bar(grid_square="EM50"):
     
     # Solar data label (SFI, K, A)
     solar_label = ft.Text(
-        "SFI:— K:— A:—",
+        "SFI:— A:— K:—",
         size=14,
         weight=ft.FontWeight.BOLD,
         color=ft.Colors.ORANGE_400,
@@ -114,9 +114,9 @@ def build_status_bar(grid_square="EM50"):
         except:
             pass  # Control not yet added to page
     
-    def set_solar(sfi, k, a):
+    def set_solar(sfi, a, k):
         """Update solar indices (SFI, K-index, A-index)"""
-        solar_label.value = f"SFI:{sfi} K:{k} A:{a}"
+        solar_label.value = f"SFI:{sfi} A:{a} K:{k}"
         try:
             solar_label.update()
         except:

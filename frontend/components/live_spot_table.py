@@ -48,6 +48,14 @@ class LiveSpotTable(ft.Column):
         self.regular_spots: list[dict] = []  # Regular spots (100 max)
         self.needed_spots: list[dict] = []   # Needed spots (kept longer)
         
+        # Grid chasing enabled flag
+        from backend.config import get_grid_chasing_enabled
+        self.grid_chasing_enabled = get_grid_chasing_enabled()
+        
+        # Watch list
+        from backend.config import get_watch_list
+        self.watch_list = set(get_watch_list())  # Use set for O(1) lookup
+        
         # Initialize with all bands selected by default
         self.filter_bands: list[str] = ["160M", "80M", "60M", "40M", "30M", "20M", "17M", "15M", "12M", "10M", "6M"]
         self.filter_grid: str = ""
@@ -106,6 +114,17 @@ class LiveSpotTable(ft.Column):
         
         self.controls = [self._list_view]
         self.expand = True
+        
+    def set_grid_chasing_enabled(self, enabled):
+        """Enable or disable grid chasing highlights"""
+        self.grid_chasing_enabled = enabled
+        self._rebuild_table()  # Refresh display
+        
+    def refresh_watch_list(self):
+        """Reload watch list from config"""
+        from backend.config import get_watch_list
+        self.watch_list = set(get_watch_list())
+        self._rebuild_table()
     
     def set_needed_spot_duration(self, minutes: int):
         """Update how long to keep needed spots"""
@@ -131,13 +150,13 @@ class LiveSpotTable(ft.Column):
         
         
         # DEBUG - Print first spot to see what data we have
-        if not hasattr(self, '_debug_printed'):
-            print(f"\nDEBUG SPOT DATA:")
-            print(f"  Call: {spot.get('call')}")
-            print(f"  DXCC: '{spot.get('dxcc')}'")
-            print(f"  Band: '{spot.get('band')}'")
-            print(f"  Grid: '{spot.get('grid')}'")
-            self._debug_printed = True
+        #if not hasattr(self, '_debug_printed'):
+        #    print(f"\nDEBUG SPOT DATA:")
+        #    print(f"  Call: {spot.get('call')}")
+        #    print(f"  DXCC: '{spot.get('dxcc')}'")
+        #    print(f"  Band: '{spot.get('band')}'")
+        #    print(f"  Grid: '{spot.get('grid')}'")
+        #    self._debug_printed = True
         
         # Add timestamp for age tracking
         spot['timestamp'] = datetime.now()
@@ -316,10 +335,10 @@ class LiveSpotTable(ft.Column):
                         needed_challenge = is_needed(dxcc_num, s.get("band", ""))
                 except:
                     pass
-            
+                    
             # Check if this spot is needed for FFMA (6m grids only)
             needed_ffma = False
-            if FFMA_AVAILABLE and s.get("band", "").upper() == "6M":
+            if self.grid_chasing_enabled and FFMA_AVAILABLE and s.get("band", "").upper() == "6M":  # ADD grid_chasing_enabled check
                 try:
                     grid = s.get("grid", "")
                     if grid:
@@ -327,8 +346,15 @@ class LiveSpotTable(ft.Column):
                 except:
                     pass
             
-            # Determine highlight color (Challenge takes priority)
-            if needed_challenge:
+            # Check if callsign is on watch list (HIGHEST PRIORITY)
+            call = s.get("call", "")
+            on_watch_list = call.upper() in self.watch_list
+            
+            # Determine highlight color (Watch List takes priority)
+            if on_watch_list:
+                highlight_color = ft.Colors.RED_400  # Watch List - RED URGENT!
+                text_color = ft.Colors.WHITE
+            elif needed_challenge:
                 highlight_color = ft.Colors.AMBER_200  # Challenge - amber
                 text_color = ft.Colors.BLACK
             elif needed_ffma:
@@ -337,9 +363,9 @@ class LiveSpotTable(ft.Column):
             else:
                 highlight_color = None
                 text_color = None
-        
+                
             # Format callsign with LoTW indicator
-            call = s.get("call", "")
+            #call = s.get("call", "")
             if LOTW_AVAILABLE and is_lotw_user(call):
                 age_days = get_upload_age_days(call)
                 if age_days and age_days <= 90:

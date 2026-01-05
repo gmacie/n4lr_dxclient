@@ -192,3 +192,32 @@ def set_blocked_spotters(spotters_list):
         config['filters'] = {}
     config['filters']['blocked_spotters'] = ','.join(spotters_list)
     save_config(config)
+    
+def get_watch_list():
+    """Get watch list callsigns"""
+    config = load_config()
+    watch_list_str = config.get('filters', 'watch_list', fallback='')
+    if watch_list_str:
+        return [call.strip().upper() for call in watch_list_str.split(',') if call.strip()]
+    return []
+
+def set_watch_list(callsigns):
+    """Set watch list callsigns (list of strings)"""
+    config = load_config()
+    if 'filters' not in config:
+        config['filters'] = {}
+    config['filters']['watch_list'] = ','.join(callsigns)
+    save_config(config)
+
+def get_grid_chasing_enabled():
+    """Get grid chasing enabled state"""
+    config = load_config()
+    return config.getboolean('display', 'grid_chasing_enabled', fallback=True)
+
+def set_grid_chasing_enabled(enabled):
+    """Set grid chasing enabled state"""
+    config = load_config()
+    if 'display' not in config:
+        config['display'] = {}
+    config['display']['grid_chasing_enabled'] = str(enabled)
+    save_config(config)

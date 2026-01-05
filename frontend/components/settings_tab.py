@@ -14,12 +14,13 @@ from backend.cluster_async import start_connection, stop_connection
 class SettingsTab(ft.Column):
     """Settings tab for user configuration and cluster controls"""
     
-    def __init__(self, page, on_settings_changed, initial_connection_state=False, challenge_table=None):
+    def __init__(self, page, on_settings_changed, initial_connection_state=False, challenge_table=None, ffma_table=None):
         super().__init__()
         self.page = page
         self.on_settings_changed = on_settings_changed
         self.is_connected = initial_connection_state  # Set based on auto-connect
         self.challenge_table = challenge_table  # Store reference for auto-refresh
+        self.ffma_table = ffma_table  # Store FFMA table reference
         
         # User settings section
         self.callsign_field = ft.TextField(
@@ -89,6 +90,19 @@ class SettingsTab(ft.Column):
             size=14,
         )
         
+        self.needed_spot_label = ft.Text(
+            f"Keep needed (amber) spots visible for: {get_needed_spot_minutes()} minutes",
+            size=14,
+        )
+        
+        # Grid chasing toggle
+        from backend.config import get_grid_chasing_enabled
+        self.grid_chasing_checkbox = ft.Checkbox(
+            label="Enable grid chasing (amber highlights for rare grids)",
+            value=get_grid_chasing_enabled(),
+            on_change=self._grid_chasing_changed,
+        )
+        
         # Blocked spotters section
         blocked = get_blocked_spotters()
         self.blocked_spotters_field = ft.TextField(
@@ -112,6 +126,33 @@ class SettingsTab(ft.Column):
         self.clear_blocked_button = ft.ElevatedButton(
             text="Clear All",
             on_click=self._clear_blocked_spotters,
+        )
+        
+        # Watch List section
+        from backend.config import get_watch_list
+        watch_list = get_watch_list()
+        
+        self.watch_list_field = ft.TextField(
+            label="Watch List",
+            hint_text="Enter callsigns separated by commas (e.g., K1ABC,W2XYZ,VE3DXE)",
+            value=', '.join(watch_list) if watch_list else '',
+            width=500,
+        )
+        
+        self.watch_count_text = ft.Text(
+            f"Watching {len(watch_list)} callsign(s)",
+            size=12,
+            color=ft.Colors.BLUE_GREY_400,
+        )
+        
+        self.save_watch_button = ft.ElevatedButton(
+            text="Save Watch List",
+            on_click=self._save_watch_list,
+        )
+        
+        self.clear_watch_button = ft.ElevatedButton(
+            text="Clear All",
+            on_click=self._clear_watch_list,
         )
         
         # LoTW credentials section
@@ -239,10 +280,44 @@ class SettingsTab(ft.Column):
                 color=ft.Colors.ORANGE_400,
             ),
             
+            ft.Container(height=40),
+            ft.Text("Watch List", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Text(
+                "Highlight specific callsigns in RED when spotted (friends, rare DX, etc.)",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=10),
+            
+            self.watch_list_field,
+            self.watch_count_text,
+            
+            ft.Row([
+                self.save_watch_button,
+                self.clear_watch_button,
+            ], spacing=10),
+            
+            ft.Text(
+                "💡 Tip: Add rare DX, friends, or targets you're hunting",
+                size=12,
+                color=ft.Colors.ORANGE_400,
+            ),
+            
             self.needed_spot_label,
             self.needed_spot_slider,
             ft.Text(
                 "Needed spots (amber highlights) stay visible longer than regular spots",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=10),
+            self.grid_chasing_checkbox,
+            ft.Text(
+                "When enabled, rare grids are highlighted in amber (needs 6m FFMA tracking)",
                 size=12,
                 color=ft.Colors.BLUE_GREY_400,
             ),
@@ -430,6 +505,16 @@ class SettingsTab(ft.Column):
         # Notify main UI to update the spot table
         if hasattr(self.page, 'spot_table'):
             self.page.spot_table.set_needed_spot_duration(minutes)
+            
+    def _grid_chasing_changed(self, e):
+        """Handle grid chasing checkbox change"""
+        from backend.config import set_grid_chasing_enabled
+        enabled = self.grid_chasing_checkbox.value
+        set_grid_chasing_enabled(enabled)
+        
+        # Notify main UI to update the spot table
+        if hasattr(self.page, 'spot_table'):
+            self.page.spot_table.set_grid_chasing_enabled(enabled)
     
     def _save_lotw_credentials(self, e):
         """Save LoTW credentials"""
@@ -451,8 +536,9 @@ class SettingsTab(ft.Column):
         self.page.update()
     
     def _download_vucc_data(self, e):
-        """Download VUCC data from LoTW"""
+        """Download VUCC data from LoTW with progress updates"""
         from backend.config import get_lotw_username, get_lotw_password, set_last_vucc_update
+        import threading
         
         username = get_lotw_username()
         password = get_lotw_password()
@@ -464,46 +550,75 @@ class SettingsTab(ft.Column):
         # Show progress
         self.lotw_download_button.disabled = True
         self.lotw_download_button.text = "Downloading..."
+        self.lotw_status_text.value = "Starting download..."
+        self.lotw_status_text.update()
         self.lotw_download_button.update()
         
-        try:
-            from backend.lotw_vucc import download_and_parse_ffma
-            from datetime import datetime
-            
-            success, result = download_and_parse_ffma(username, password)
-            
-            if success:
-                # Update status
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-                set_last_vucc_update(timestamp)
-                self.lotw_status_text.value = f"Last updated: {timestamp}"
-                self.lotw_status_text.update()
-                
-                # Show success
-                total = result.get('total_worked', 0)
-                pct = result.get('completion_pct', 0)
-                
-                self.page.snack_bar = ft.SnackBar(
-                    content=ft.Text(f"Success! {total}/488 FFMA grids confirmed ({pct}%)"),
-                    bgcolor=ft.Colors.GREEN_400,
-                )
-                self.page.snack_bar.open = True
-                self.page.update()
-            else:
-                self._show_error(f"Download failed: {result}")
+        def update_progress(message):
+            self.lotw_status_text.value = message
+            # Force immediate update from background thread
+            if self.page:
+                try:
+                    import time
+                    self.lotw_status_text.update()
+                    time.sleep(2.0)  # Give UI time to refresh
+                except:
+                    pass
         
-        except Exception as ex:
-            self._show_error(f"Error: {str(ex)}")
+        # Run download in background thread
+        def download_thread():
+            try:
+                from backend.lotw_vucc import download_and_parse_ffma
+                from datetime import datetime
+                
+                success, result = download_and_parse_ffma(username, password, progress_callback=update_progress)
+                
+                if success:
+                    # Update status
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    set_last_vucc_update(timestamp)
+                    self.lotw_status_text.value = f"Last updated: {timestamp}"
+                    
+                    # Show success
+                    total = result.get('total_worked', 0)
+                    pct = result.get('completion_pct', 0)
+                    
+                    self.page.snack_bar = ft.SnackBar(
+                        content=ft.Text(f"Success! {total}/488 FFMA grids ({pct}%)"),
+                        bgcolor=ft.Colors.GREEN_400,
+                    )
+                    self.page.snack_bar.open = True
+                    
+                    # Auto-refresh FFMA table
+                    if self.ffma_table:
+                        try:
+                            self.ffma_table.refresh()
+                            print("FFMA table refreshed after download")
+                        except Exception as e:
+                            print(f"Error refreshing FFMA table: {e}")
+                else:
+                    self._show_error(f"Download failed: {result}")
+            
+            except Exception as ex:
+                self._show_error(f"Error: {str(ex)}")
+            
+            finally:
+                # Re-enable button
+                self.lotw_download_button.disabled = False
+                self.lotw_download_button.text = "Download VUCC Data"
+                try:
+                    self.page.update()
+                except:
+                    pass
         
-        finally:
-            # Re-enable button
-            self.lotw_download_button.disabled = False
-            self.lotw_download_button.text = "Download VUCC Data"
-            self.lotw_download_button.update()
+        # Start thread
+        thread = threading.Thread(target=download_thread, daemon=True)
+        thread.start()
     
     def _download_challenge_data(self, e):
-        """Download Challenge data from LoTW"""
+        """Download Challenge data from LoTW with progress updates"""
         from backend.config import get_lotw_username, get_lotw_password, set_last_challenge_update, get_last_challenge_update
+        import threading
         
         username = get_lotw_username()
         password = get_lotw_password()
@@ -515,61 +630,81 @@ class SettingsTab(ft.Column):
         # Show progress
         self.challenge_download_button.disabled = True
         self.challenge_download_button.text = "Downloading..."
+        self.challenge_status_text.value = "Starting download..."
+        self.challenge_status_text.update()
         self.challenge_download_button.update()
         
-        try:
-            from backend.lotw_challenge import download_and_parse_challenge
-            from backend.config import get_user_callsign
-            from datetime import datetime
-            
-            # Get callsign for filtering
-            callsign = get_user_callsign().split('-')[0]  # Strip suffix if present
-            
-            # Get last update date for incremental download
-            last_update = get_last_challenge_update()
-            since_date = last_update.split()[0] if last_update else None  # Extract date part
-            
-            # Always start from 2000-01-01 for first download
-            start_date = "2000-01-01" if not since_date else None
-            
-            success, result = download_and_parse_challenge(username, password, since_date, start_date, callsign)
-            
-            if success:
-                # Update status
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-                set_last_challenge_update(timestamp)
-                self.challenge_status_text.value = f"Last updated: {timestamp}"
-                self.challenge_status_text.update()
-                
-                # Show success
-                total_entities = result.get('total_entities', 0)
-                total_slots = result.get('total_challenge_slots', 0)
-                
-                self.page.snack_bar = ft.SnackBar(
-                    content=ft.Text(f"Success! {total_entities} entities, {total_slots} total slots"),
-                    bgcolor=ft.Colors.GREEN_400,
-                )
-                self.page.snack_bar.open = True
+        # Progress callback to update UI
+        def update_progress(message):
+            self.challenge_status_text.value = message
+            try:
                 self.page.update()
+            except:
+                pass
+        
+        # Run download in background thread
+        def download_thread():
+            try:
+                from backend.lotw_challenge import download_and_parse_challenge
+                from backend.config import get_user_callsign
+                from datetime import datetime
                 
-                # Auto-refresh Challenge table
-                if self.challenge_table:
-                    try:
-                        self.challenge_table.refresh()
-                        print("Challenge table refreshed after download")
-                    except Exception as e:
-                        print(f"Error refreshing challenge table: {e}")
-            else:
-                self._show_error(f"Download failed: {result}")
+                # Get callsign for filtering
+                callsign = get_user_callsign().split('-')[0]
+                
+                # Get last update date for incremental download
+                last_update = get_last_challenge_update()
+                since_date = last_update.split()[0] if last_update else None
+                
+                # Always start from 2000-01-01 for first download
+                start_date = "2000-01-01" if not since_date else None
+                
+                success, result = download_and_parse_challenge(
+                    username, password, since_date, start_date, callsign,
+                    progress_callback=update_progress
+                )
+                
+                if success:
+                    # Update status
+                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                    set_last_challenge_update(timestamp)
+                    self.challenge_status_text.value = f"Last updated: {timestamp}"
+                    
+                    # Show success
+                    total_entities = result.get('total_entities', 0)
+                    total_slots = result.get('total_challenge_slots', 0)
+                    
+                    self.page.snack_bar = ft.SnackBar(
+                        content=ft.Text(f"Success! {total_entities} entities, {total_slots} slots"),
+                        bgcolor=ft.Colors.GREEN_400,
+                    )
+                    self.page.snack_bar.open = True
+                    
+                    # Auto-refresh Challenge table
+                    if self.challenge_table:
+                        try:
+                            self.challenge_table.refresh()
+                            print("Challenge table refreshed after download")
+                        except Exception as e:
+                            print(f"Error refreshing challenge table: {e}")
+                else:
+                    self._show_error(f"Download failed: {result}")
+            
+            except Exception as ex:
+                self._show_error(f"Error: {str(ex)}")
+            
+            finally:
+                # Re-enable button
+                self.challenge_download_button.disabled = False
+                self.challenge_download_button.text = "Download Challenge Data"
+                try:
+                    self.page.update()
+                except:
+                    pass
         
-        except Exception as ex:
-            self._show_error(f"Error: {str(ex)}")
-        
-        finally:
-            # Re-enable button
-            self.challenge_download_button.disabled = False
-            self.challenge_download_button.text = "Download Challenge Data"
-            self.challenge_download_button.update()
+        # Start thread
+        thread = threading.Thread(target=download_thread, daemon=True)
+        thread.start()
     
     def _save_blocked_spotters(self, e):
         """Save blocked spotters list"""
@@ -603,6 +738,51 @@ class SettingsTab(ft.Column):
         
         self.page.snack_bar = ft.SnackBar(
             content=ft.Text("Cleared all blocked spotters"),
+            bgcolor=ft.Colors.GREEN_400,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+        
+    def _save_watch_list(self, e):
+        """Save watch list"""
+        from backend.config import set_watch_list
+        
+        text = self.watch_list_field.value.strip()
+        
+        if not text:
+            callsigns = []
+        else:
+            callsigns = [s.strip().upper() for s in text.split(',') if s.strip()]
+        
+        set_watch_list(callsigns)
+        
+        self.watch_count_text.value = f"Watching {len(callsigns)} callsign(s)"
+        self.watch_count_text.update()
+        
+        # Refresh spot table with new watch list
+        if hasattr(self.page, 'spot_table'):
+            self.page.spot_table.refresh_watch_list()
+        
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text(f"Saved {len(callsigns)} callsign(s) to watch list"),
+            bgcolor=ft.Colors.GREEN_400,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+    
+    def _clear_watch_list(self, e):
+        """Clear watch list"""
+        from backend.config import set_watch_list
+        
+        set_watch_list([])
+        self.watch_list_field.value = ''
+        self.watch_count_text.value = "Watching 0 callsign(s)"
+        
+        self.watch_list_field.update()
+        self.watch_count_text.update()
+        
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text("Cleared watch list"),
             bgcolor=ft.Colors.GREEN_400,
         )
         self.page.snack_bar.open = True

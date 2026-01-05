@@ -29,6 +29,12 @@ class MainUI(ft.Column):
     def __init__(self, page: ft.Page):
         super().__init__(expand=True)
         self.page = page
+        
+        # Add Font Awesome font
+        self.page.fonts = {
+            "FontAwesome": "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/webfonts/fa-solid-900.ttf"
+        }
+        
         self.connection_task = None
         self.solar_timer_task = None 
 
@@ -83,7 +89,8 @@ class MainUI(ft.Column):
                 ft.Text("Bands:", weight=ft.FontWeight.BOLD, size=14),
                 self.schedule_button,
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            ft.Row([self.all_bands_checkbox, self.none_bands_checkbox], spacing=5),
+            self.all_bands_checkbox,
+            self.none_bands_checkbox,
         ]
         
         for band in bands:
@@ -128,6 +135,12 @@ class MainUI(ft.Column):
             on_click=self._quick_reject_kve,
         )
         
+        self.reject_top10_button = ft.ElevatedButton(
+            text="Reject Top 10",
+            tooltip="Quick reject top 10 (11) countries",
+            on_click=self._quick_reject_top10,
+        )
+        
         self.reset_filters_button = ft.ElevatedButton(
             text="Reset Filters",
             tooltip="Clear all server filters",
@@ -154,6 +167,7 @@ class MainUI(ft.Column):
                 self.grid_field,
                 self.dxcc_field,
                 self.reject_kve_button,
+                self.reject_top10_button,
                 self.lotw_only_button,
                 self.needed_only_button,
                 self.reset_filters_button,
@@ -171,10 +185,12 @@ class MainUI(ft.Column):
             hint_text="e.g., set/filter dxcty/reject k",
             width=400,
             on_submit=self._send_command,
+            bgcolor=ft.Colors.BLUE_GREY_900,
+            border_color=ft.Colors.BLUE_GREY_700,
         )
         
         self.history_button = ft.IconButton(
-            icon=ft.Icons.HISTORY,
+            icon=ft.Icons.LIST,                       # was .HISTORY for circle
             tooltip="Command History",
             on_click=self._show_command_history,
         )
@@ -201,7 +217,7 @@ class MainUI(ft.Column):
             spacing=10,
         )
 
-        # Build Spots tab content with side-by-side layout
+# Build Spots tab content with side-by-side layout
         # Left side: filters + command + spots table (scrollable, expand)
         # Right side: band checkboxes (fixed width, non-scrolling)
         
@@ -220,21 +236,16 @@ class MainUI(ft.Column):
         # Build Settings tab
         # Create challenge tab first so we can pass reference to settings
         self.challenge_table = ChallengeTable()
+        self.ffma_table = FFMATable()  # Create FFMA table
         
         settings_tab_content = SettingsTab(
             page=self.page,
             on_settings_changed=self._on_settings_changed,
             initial_connection_state=get_auto_connect(),
-            challenge_table=self.challenge_table  # Pass reference for auto-refresh
+            challenge_table=self.challenge_table,
+            ffma_table=self.ffma_table
         )
-        
-        # FFMA tab
-        ffma_tab = ft.Tab(
-            text="FFMA",
-            icon=ft.Icons.GRID_4X4,
-            content=FFMATable(),
-        )
-
+     
         # Create tabs
         self.tabs = ft.Tabs(
             selected_index=0,
@@ -242,18 +253,24 @@ class MainUI(ft.Column):
             tabs=[
                 ft.Tab(
                     text="Live Spots",
-                    icon=ft.Icons.RADAR,
+                    icon=ft.Text(
+                        "\uf519",  # tower-broadcast Unicode
+                        font_family="FontAwesome",
+                        size=20,
+                        weight=ft.FontWeight.W_900,
+                    ),
                     content=spots_content,
                 ),
                 ft.Tab(
                     text="Challenge",
-                    icon=ft.Icons.EMOJI_EVENTS,  # Trophy icon
+                    #icon=ft.Icons.EMOJI_EVENTS,  # Trophy icon
+                    icon=ft.Icon(ft.Icons.EMOJI_EVENTS, color=ft.Colors.AMBER_600),
                     content=self.challenge_table,  # Use stored reference
                 ),
                 ft.Tab(
                     text="FFMA",
                     icon=ft.Icons.GRID_4X4,  # Grid icon
-                    content=FFMATable(),
+                    content=self.ffma_table,
                 ),
                 ft.Tab(
                     text="Settings",
@@ -354,6 +371,10 @@ class MainUI(ft.Column):
     def _quick_reject_kve(self, e):
         """Quick button to reject K and VE spots"""
         publish({"type": "cluster_command", "data": "set/filter dxcty/reject k,ve"})
+        
+    def _quick_reject_top10(self, e):
+        """Quick button to reject top 10 (11) countries"""
+        publish({"type": "cluster_command", "data": "set/filter dxcty/reject k,ve,i,dl,ua,f,ea,sp,g,ur,ha"})
 
     def _quick_reset_filters(self, e):
         """Quick button to reset all server filters"""
