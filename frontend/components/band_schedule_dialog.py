@@ -1,4 +1,10 @@
 # band_schedule_dialog.py - Band-specific time filter dialog
+# 01/06/2026 - Added logging and config persistence
+
+from backend.app_logging import get_logger
+
+logger = get_logger(__name__)
+
 import flet as ft
 from backend.message_bus import publish
 
@@ -9,8 +15,21 @@ class BandScheduleDialog:
     def __init__(self, page):
         self.page = page
         
-        # Band schedule data: band -> (start_time, stop_time, enabled)
-        self.schedules = {
+        # Load saved schedules from config
+        self.schedules = self._load_schedules()
+        
+        self.band_rows = {}
+        self.dialog = self._build_dialog()
+    
+    def _load_schedules(self):
+        """Load band schedules from config"""
+        from backend.config import load_config
+        
+        config = load_config()
+        schedules = {}
+        
+        # Default values for low bands
+        defaults = {
             "160m": ("2200", "1300", False),
             "80m": ("2200", "1300", False),
             "60m": ("2200", "1300", False),
@@ -24,8 +43,29 @@ class BandScheduleDialog:
             "6m": ("", "", False),
         }
         
-        self.band_rows = {}
-        self.dialog = self._build_dialog()
+        for band in ["160m", "80m", "60m", "40m", "30m", "20m", "17m", "15m", "12m", "10m", "6m"]:
+            start = config.get('band_schedule', f'{band}_start', fallback=defaults[band][0])
+            stop = config.get('band_schedule', f'{band}_stop', fallback=defaults[band][1])
+            enabled = config.getboolean('band_schedule', f'{band}_enabled', fallback=defaults[band][2])
+            schedules[band] = (start, stop, enabled)
+        
+        return schedules
+    
+    def _save_schedules(self):
+        """Save band schedules to config"""
+        from backend.config import load_config, save_config
+        
+        config = load_config()
+        if 'band_schedule' not in config:
+            config['band_schedule'] = {}
+        
+        for band, (start, stop, enabled) in self.schedules.items():
+            config['band_schedule'][f'{band}_start'] = start
+            config['band_schedule'][f'{band}_stop'] = stop
+            config['band_schedule'][f'{band}_enabled'] = str(enabled)
+        
+        save_config(config)
+        logger.info("BAND SCHEDULE → Saved to config.ini")
     
     def _build_dialog(self):
         """Build the schedule dialog"""
@@ -39,7 +79,7 @@ class BandScheduleDialog:
             
             start_field = ft.TextField(
                 value=start_time,
-                hint_text="HH:MM",
+                hint_text="HHMM",
                 width=80,
                 text_size=14,
                 on_change=lambda e, b=band: self._update_start(b, e),
@@ -47,7 +87,7 @@ class BandScheduleDialog:
             
             stop_field = ft.TextField(
                 value=stop_time,
-                hint_text="HH:MM",
+                hint_text="HHMM",
                 width=80,
                 text_size=14,
                 on_change=lambda e, b=band: self._update_stop(b, e),
@@ -73,7 +113,7 @@ class BandScheduleDialog:
         content = ft.Column([
             ft.Text("Band Time Filters", size=20, weight=ft.FontWeight.BOLD),
             ft.Divider(),
-            ft.Text("Set time windows for each band (24-hour UTC format)", size=12, color=ft.Colors.BLUE_GREY_400),
+            ft.Text("Set time windows for each band (24-hour UTC format: HHMM)", size=12, color=ft.Colors.BLUE_GREY_400),
             ft.Container(height=10),
             ft.Column(rows, spacing=8, scroll=ft.ScrollMode.AUTO, height=400),
             ft.Container(height=20),
@@ -106,24 +146,30 @@ class BandScheduleDialog:
         self.schedules[band] = (start, e.control.value, enabled)
     
     def _validate_time(self, time_str):
-        """Validate HH:MM format"""
+        """Validate HHMM format (also accepts HH:MM)"""
         if not time_str:
             return False
         
-        parts = time_str.split(':')
-        if len(parts) != 2:
+        # Remove colon if present
+        time_str = time_str.replace(':', '')
+        
+        # Should be 4 digits
+        if len(time_str) != 4:
             return False
         
         try:
-            hour = int(parts[0])
-            minute = int(parts[1])
+            hour = int(time_str[:2])
+            minute = int(time_str[2:])
             return 0 <= hour <= 23 and 0 <= minute <= 59
         except:
             return False
     
     def _apply_filters(self, e):
         """Send filter commands to cluster"""
+        logger.info("BAND SCHEDULE → Applying time filters")
+        
         commands = []
+        enabled_count = 0
         
         for band, (start, stop, enabled) in self.schedules.items():
             band_num = band.replace('m', '')  # "160m" -> "160"
@@ -131,7 +177,8 @@ class BandScheduleDialog:
             if enabled and start and stop:
                 # Validate times
                 if not self._validate_time(start) or not self._validate_time(stop):
-                    self._show_error(f"Invalid time format for {band}. Use HH:MM (24-hour)")
+                    self._show_error(f"Invalid time format for {band}. Use HHMM (e.g., 2200)")
+                    logger.error(f"BAND SCHEDULE ✗ Invalid time format: {band} {start}-{stop}")
                     return
                 
                 # Remove colons for cluster command (HH:MM -> HHMM)
@@ -141,32 +188,47 @@ class BandScheduleDialog:
                 # Send filter command
                 cmd = f"set/filter/{band_num} bandtime/pass {start_clean},{stop_clean}"
                 commands.append(cmd)
+                enabled_count += 1
+                logger.info(f"  {band}: ENABLED {start_clean}-{stop_clean} → {cmd}")
             else:
                 # Clear filter for this band
                 cmd = f"set/filter/{band_num} nobandtime"
                 commands.append(cmd)
+                logger.info(f"  {band}: DISABLED → {cmd}")
+        
+        logger.info(f"BAND SCHEDULE → Sending {len(commands)} commands ({enabled_count} enabled)")
         
         # Send all commands
         for cmd in commands:
             publish({"type": "cluster_command", "data": cmd})
-            print(f"Band schedule: {cmd}")
         
-        self._show_success(f"Applied {len([s for s in self.schedules.values() if s[2]])} band time filters")
+        # Save to config
+        self._save_schedules()
+        
+        logger.info(f"BAND SCHEDULE ✓ Applied {enabled_count} enabled filters")
+        
+        self._show_success(f"Applied {enabled_count} band time filter(s)")
         self._close(None)
     
     def _clear_all(self, e):
         """Clear all time filters"""
+        logger.info("BAND SCHEDULE → Clearing all filters")
+        
         for band in self.schedules:
             band_num = band.replace('m', '')
             cmd = f"set/filter/{band_num} nobandtime"
+            logger.info(f"  {band}: CLEARING → {cmd}")
             publish({"type": "cluster_command", "data": cmd})
         
-        # Reset UI
+        # Reset UI and schedules
         for band in self.schedules:
             self.schedules[band] = ("", "", False)
             self.band_rows[band]["start"].value = ""
             self.band_rows[band]["stop"].value = ""
             self.band_rows[band]["enabled"].value = False
+        
+        # Save cleared state
+        self._save_schedules()
         
         try:
             for band in self.band_rows:
@@ -176,6 +238,7 @@ class BandScheduleDialog:
         except:
             pass
         
+        logger.info("BAND SCHEDULE ✓ Cleared all filters")
         self._show_success("Cleared all band time filters")
     
     def _close(self, e):

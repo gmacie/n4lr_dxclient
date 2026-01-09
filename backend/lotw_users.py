@@ -9,9 +9,12 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import json
 
+from backend.file_paths import get_lotw_users_file
+
 LOTW_URL = "https://lotw.arrl.org/lotw-user-activity.csv"
 LOTW_FALLBACK_URL = "https://www.hb9bza.net/lotw/lotw-user-activity.csv"
-CACHE_FILE = Path("lotw_users.json")
+
+CACHE_FILE = get_lotw_users_file()
 CACHE_DAYS = 7  # Refresh weekly
 
 # Global cache: callsign -> last_upload_date
@@ -187,6 +190,21 @@ def is_active_user(callsign, days=90):
         return False
     return age <= days
 
+def get_user_count():
+    """Get number of cached LoTW users"""
+    if not _lotw_users:
+        load_cache()
+    return len(_lotw_users)
+
+def get_cache_age_days():
+    """Get age of cache in days"""
+    if not _last_loaded:
+        load_cache()
+    
+    if _last_loaded:
+        age = datetime.now() - _last_loaded
+        return age.days
+    return None
 
 # Load cache on module import
 load_cache()

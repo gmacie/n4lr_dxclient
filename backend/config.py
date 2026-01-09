@@ -2,12 +2,20 @@
 import configparser
 import os
 from pathlib import Path
+from backend.file_paths import get_config_file
 
-CONFIG_FILE = "config.ini"
+from backend.secure_credentials import (
+    save_lotw_credentials as set_lotw_credentials,
+    get_lotw_credentials,
+    delete_lotw_credentials
+)
+
+CONFIG_FILE = get_config_file()
+
 
 def get_config_path():
     """Get the path to the config file in the app directory"""
-    return Path(CONFIG_FILE)
+    return CONFIG_FILE
 
 def load_config():
     """Load configuration from config.ini, create with defaults if doesn't exist"""
@@ -131,23 +139,14 @@ def set_user_settings(callsign, grid):
     save_config(config)
 
 def get_lotw_username():
-    """Get LoTW username"""
-    config = load_config()
-    return config.get('lotw', 'username', fallback='')
+    """Get LoTW username from secure storage"""
+    username, _ = get_lotw_credentials()
+    return username or ""
 
 def get_lotw_password():
-    """Get LoTW password"""
-    config = load_config()
-    return config.get('lotw', 'password', fallback='')
-
-def set_lotw_credentials(username, password):
-    """Set LoTW username and password"""
-    config = load_config()
-    if 'lotw' not in config:
-        config['lotw'] = {}
-    config['lotw']['username'] = username
-    config['lotw']['password'] = password
-    save_config(config)
+    """Get LoTW password from secure storage"""
+    _, password = get_lotw_credentials()
+    return password or ""
 
 def get_last_vucc_update():
     """Get last VUCC data update timestamp"""

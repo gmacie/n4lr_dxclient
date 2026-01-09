@@ -161,6 +161,10 @@ class LiveSpotTable(ft.Column):
         # Add timestamp for age tracking
         spot['timestamp'] = datetime.now()
         
+        # Check if callsign is on watch list
+        call = spot.get("call", "")
+        is_on_watch_list = call.upper() in self.watch_list
+        
         # Check if this spot is needed for Challenge
         is_spot_needed_challenge = False
         if CHALLENGE_AVAILABLE and DXCC_LOOKUP_AVAILABLE:
@@ -184,8 +188,9 @@ class LiveSpotTable(ft.Column):
             except:
                 pass
         
-        # Add to appropriate buffer (either Challenge or FFMA needed goes to needed buffer)
-        if is_spot_needed_challenge or is_spot_needed_ffma:
+        # Add to appropriate buffer (watch list, Challenge, or FFMA needed goes to needed buffer)
+        if is_on_watch_list or is_spot_needed_challenge or is_spot_needed_ffma:
+ 
             # Remove any existing spot with same callsign+band from needed buffer
             call = spot.get("call", "")
             band = spot.get("band", "")
@@ -295,6 +300,11 @@ class LiveSpotTable(ft.Column):
         
         # Needed Only filter
         if self.filter_needed_only:
+            # Check if on watch list - always pass if on watch list
+            call = s.get("call", "")
+            if call.upper() in self.watch_list:
+                return True  # Watch list spots ALWAYS show
+            
             if CHALLENGE_AVAILABLE and DXCC_LOOKUP_AVAILABLE:
                 try:
                     dxcc_prefix = s.get("dxcc", "")

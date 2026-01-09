@@ -1,4 +1,9 @@
 # cluster_async.py  12/21/2025 - Added connect/disconnect control
+
+from backend.app_logging import get_logger
+
+logger = get_logger(__name__)
+
 import asyncio
 from backend.message_bus import publish
 from backend.config import get_user_callsign, get_current_server
@@ -89,10 +94,20 @@ async def run_cluster_monitor(server_host: str = None, server_port: int = None):
                     print(f"DEBUG: Server response {i}: {line.decode(errors='ignore').strip()}")
                 
                 print(f"DEBUG: Sending cluster commands...")
+                
+                logger.info("STARTUP → Sending initialization commands")
+                
                 writer.write(b"set/nofilter\n")
+                logger.info("STARTUP CMD - set/nofilter")
+                
                 writer.write(b"set/ve7cc\n")
+                logger.info("STARTUP CMD - set/ve7cc")
+                
                 writer.write(b"set/skimmer\n")
-                #writer.write(b"set/nodedup\n")
+                logger.info("STARTUP CMD - set/skimmer")
+                
+                logger.info("STARTUP OK Initialization complete")
+                
                 await writer.drain()
                 print(f"DEBUG: Login commands sent, waiting for spots...")
                 
@@ -164,7 +179,7 @@ async def run_cluster_monitor(server_host: str = None, server_port: int = None):
                         "comment": parts[spotComment],
                         "time": parts[spotZulu],
                     }
-                    #print(f"DEBUG: Publishing spot: {spot['call']} on {spot['band']}")
+                    #73print(f"DEBUG: Publishing spot: {spot['call']} on {spot['band']}")
                     publish({"type": "spot", "data": spot})
                 
                 # Clean disconnect
@@ -195,21 +210,24 @@ async def run_cluster_monitor(server_host: str = None, server_port: int = None):
         publish({"type": "status", "data": "Backend stopped."})
         return
 
-
 async def handle_commands(writer):
     """Handle commands from the UI and send to cluster"""
     try:
         while True:
             cmd = await command_queue.get()
+            
             # Ensure command ends with newline
             if not cmd.endswith("\n"):
                 cmd += "\n"
             writer.write(cmd.encode())
             await writer.drain()
+            
+            # Log success
+            logger.info(f"CLUSTER CMD - {cmd.strip()}")
             publish({"type": "status", "data": f"Sent: {cmd.strip()}"})
+            
     except asyncio.CancelledError:
         pass
-
 
 async def start_connection(server_host: str = None, server_port: int = None):
     """Start cluster connection (call from UI using page.run_task)"""

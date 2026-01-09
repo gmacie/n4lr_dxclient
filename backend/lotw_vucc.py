@@ -10,6 +10,7 @@ from datetime import datetime
 from urllib.parse import urlencode
 import time
 
+from backend.file_paths import get_user_data_directory
 
 def download_vucc_qsos(username, password, band="6m", since_date=None, progress_callback=None):
     """
@@ -148,9 +149,10 @@ def download_and_parse_ffma(username, password, progress_callback=None):
     if not success:
         return False, result
     
-    # Save ADIF
-    adif_file = "vucc_6m.adi"
-    save_vucc_adif(result, adif_file)
+    # Save ADIF to user data directory
+    adif_file = get_user_data_directory() / "vucc_6m.adi"
+    adif_file.write_text(result, encoding='utf-8')
+    print(f"Saved to {adif_file}")
     
     # Parse for FFMA grids
     if progress_callback:
@@ -160,7 +162,7 @@ def download_and_parse_ffma(username, password, progress_callback=None):
     from backend.ffma_tracking import parse_lotw_adif_for_ffma, save_ffma_data
     
     try:
-        worked_grids = parse_lotw_adif_for_ffma(adif_file)
+        worked_grids = parse_lotw_adif_for_ffma(str(adif_file))
         ffma_data = save_ffma_data(worked_grids)
         
         if progress_callback:

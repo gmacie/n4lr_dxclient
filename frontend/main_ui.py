@@ -4,13 +4,14 @@ import flet as ft
 import asyncio
 import time
 
+from backend.app_logging import get_logger
+logger = get_logger(__name__)
+
 from backend.message_bus import register_callback, publish
 from backend.config import get_user_grid
 from backend.solar import fetch_solar_data, get_solar_data
+
 from frontend.components.status_bar import build_status_bar
-from frontend.components.live_spot_table import LiveSpotTable
-from frontend.components.settings_tab import SettingsTab
-from frontend.components.challenge_table import ChallengeTable
 from frontend.components.band_schedule_dialog import BandScheduleDialog
 from frontend.components.ffma_table import FFMATable
 
@@ -29,6 +30,17 @@ class MainUI(ft.Column):
     def __init__(self, page: ft.Page):
         super().__init__(expand=True)
         self.page = page
+        
+        # INITIALIZE DXCC LOOKUP FIRST - before creating any components
+        from backend.dxcc_lookup import initialize_dxcc_lookup
+        print("Initializing DXCC lookup...")
+        initialize_dxcc_lookup()
+        print("DXCC lookup initialized successfully")
+        
+        # NOW import components (after DXCC initialized)
+        from frontend.components.live_spot_table import LiveSpotTable
+        from frontend.components.settings_tab import SettingsTab
+        from frontend.components.challenge_table import ChallengeTable
         
         # Add Font Awesome font
         self.page.fonts = {
@@ -370,15 +382,19 @@ class MainUI(ft.Column):
     # ------------------------------------------------------------
     def _quick_reject_kve(self, e):
         """Quick button to reject K and VE spots"""
+        logger.info("QUICK FILTER - set/filter dxcty/reject k,ve")
         publish({"type": "cluster_command", "data": "set/filter dxcty/reject k,ve"})
         
     def _quick_reject_top10(self, e):
         """Quick button to reject top 10 (11) countries"""
+        logger.info("QUICK FILTER - set/filter dxcty/reject k,ve,i,dl,ua,f,ea,sp,g,ur,ha")
         publish({"type": "cluster_command", "data": "set/filter dxcty/reject k,ve,i,dl,ua,f,ea,sp,g,ur,ha"})
 
     def _quick_reset_filters(self, e):
         """Quick button to reset all server filters"""
-        publish({"type": "cluster_command", "data": "set/nofilter"})
+        
+        publish({"type": "cluster_command", "data": "Clear all filters to initialize set/nofilter"})
+        logger.info("FILTER RESET - set/nofilter")
         
         # Clear local filters
         self.grid_field.value = ""
@@ -470,6 +486,9 @@ class MainUI(ft.Column):
         cmd = self.command_field.value.strip() if self.command_field.value else ""
         if not cmd:
             return
+        
+        # Log user command
+        logger.info(f"USER CMD - {cmd}")
         
         # Publish command to backend via message bus
         publish({"type": "cluster_command", "data": cmd})

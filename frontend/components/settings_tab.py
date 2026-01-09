@@ -1,6 +1,7 @@
 # settings_tab.py - Settings configuration with cluster controls
 import flet as ft
 import asyncio
+
 from backend.config import (
     get_user_callsign, get_user_grid, set_user_settings,
     get_cluster_servers, get_current_server, set_current_server,
@@ -155,20 +156,50 @@ class SettingsTab(ft.Column):
             on_click=self._clear_watch_list,
         )
         
+        # LoTW Users Database section
+        from backend.lotw_users import get_cache_age_days, get_user_count
+            
+        cache_age = get_cache_age_days()
+        user_count = get_user_count()
+           
+        if cache_age is not None:
+            age_text = f"{cache_age} days old"
+            age_color = ft.Colors.ORANGE if cache_age > 7 else ft.Colors.GREEN
+        else:
+            age_text = "No cache"
+            age_color = ft.Colors.RED
+            
+        self.lotw_cache_text = ft.Text(
+            f"LoTW Users: {user_count:,} ({age_text})",
+            size=14,
+            color=age_color,
+        )
+            
+        self.lotw_update_button = ft.ElevatedButton(
+            text="Update LoTW Users",
+            on_click=self._update_lotw_users,
+            icon=ft.Icons.DOWNLOAD,
+        )
+        
         # LoTW credentials section
         from backend.config import get_lotw_username, get_lotw_password, get_last_vucc_update
+        
+        # LoTW credentials section
+        from backend.secure_credentials import get_lotw_credentials
+        
+        username, password = get_lotw_credentials()
         
         self.lotw_username_field = ft.TextField(
             label="LoTW Username",
             hint_text="Usually your callsign",
-            value=get_lotw_username(),
+            value=username or "",
             width=200,
         )
         
         self.lotw_password_field = ft.TextField(
             label="LoTW Password",
             hint_text="Your LoTW password",
-            value=get_lotw_password(),
+            value=password or "",
             password=True,
             can_reveal_password=True,
             width=200,
@@ -323,6 +354,27 @@ class SettingsTab(ft.Column):
             ),
             
             ft.Container(height=40),
+            ft.Text("LoTW User Database", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Text(
+                "Updates LoTW user list and last upload dates (225k+ users)",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=10),
+            
+            self.lotw_cache_text,
+            self.lotw_update_button,
+            
+            ft.Text(
+                "Auto-updates weekly. Use button to force refresh.",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=40),
             ft.Text("LoTW Integration (FFMA)", size=20, weight=ft.FontWeight.BOLD),
             ft.Divider(),
             
@@ -353,10 +405,16 @@ class SettingsTab(ft.Column):
             
             self.lotw_status_text,
             
+            
             ft.Text(
-                "Note: Password is stored in config.ini. Download fetches 6m confirmations for FFMA.",
+                "Credentials stored securely in Windows Credential Manager / macOS Keychain",
                 size=12,
-                color=ft.Colors.ORANGE_400,
+                color=ft.Colors.GREEN_400,
+            ),
+            ft.Text(
+                "Download fetches 6m confirmations for FFMA.",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
             ),
             
             ft.Container(height=40),
@@ -517,7 +575,7 @@ class SettingsTab(ft.Column):
             self.page.spot_table.set_grid_chasing_enabled(enabled)
     
     def _save_lotw_credentials(self, e):
-        """Save LoTW credentials"""
+        """Save LoTW credentials to secure storage"""
         username = self.lotw_username_field.value.strip()
         password = self.lotw_password_field.value.strip()
         
@@ -525,18 +583,27 @@ class SettingsTab(ft.Column):
             self._show_error("Please enter both username and password")
             return
         
-        from backend.config import set_lotw_credentials
-        set_lotw_credentials(username, password)
+        from backend.secure_credentials import save_lotw_credentials
         
-        self.page.snack_bar = ft.SnackBar(
-            content=ft.Text("LoTW credentials saved"),
-            bgcolor=ft.Colors.GREEN_400,
-        )
+        success = save_lotw_credentials(username, password)
+        
+        if success:
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Text("LoTW credentials saved securely to system keyring"),
+                bgcolor=ft.Colors.GREEN_400,
+            )
+        else:
+            self.page.snack_bar = ft.SnackBar(
+                content=ft.Text("Failed to save credentials"),
+                bgcolor=ft.Colors.RED_400,
+            )
+        
         self.page.snack_bar.open = True
         self.page.update()
     
     def _download_vucc_data(self, e):
         """Download VUCC data from LoTW with progress updates"""
+        logger.info("FFMA DOWNLOAD - Starting VUCC download")
         from backend.config import get_lotw_username, get_lotw_password, set_last_vucc_update
         import threading
         
@@ -665,30 +732,33 @@ class SettingsTab(ft.Column):
                 )
                 
                 if success:
-                    # Update status
-                    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-                    set_last_challenge_update(timestamp)
-                    self.challenge_status_text.value = f"Last updated: {timestamp}"
+                        # Update status
+                        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                        set_last_challenge_update(timestamp)
+                        self.challenge_status_text.value = f"Last updated: {timestamp}"
                     
-                    # Show success
-                    total_entities = result.get('total_entities', 0)
-                    total_slots = result.get('total_challenge_slots', 0)
+                        # Show success
+                        total_entities = result.get('total_entities', 0)
+                        total_slots = result.get('total_challenge_slots', 0)
                     
-                    self.page.snack_bar = ft.SnackBar(
-                        content=ft.Text(f"Success! {total_entities} entities, {total_slots} slots"),
-                        bgcolor=ft.Colors.GREEN_400,
-                    )
-                    self.page.snack_bar.open = True
+                        self.page.snack_bar = ft.SnackBar(
+                            content=ft.Text(f"Success! {total_entities} entities, {total_slots} slots"),
+                            bgcolor=ft.Colors.GREEN_400,
+                        )
+                        self.page.snack_bar.open = True
+                        self.page.update()
                     
-                    # Auto-refresh Challenge table
-                    if self.challenge_table:
-                        try:
-                            self.challenge_table.refresh()
-                            print("Challenge table refreshed after download")
-                        except Exception as e:
-                            print(f"Error refreshing challenge table: {e}")
-                else:
-                    self._show_error(f"Download failed: {result}")
+                        # CRITICAL: Reload challenge data immediately
+                        if self.challenge_table:
+                            try:
+                                # Force complete reload of challenge data
+                                self.challenge_table.challenge_data = self.challenge_table._load_challenge_data()
+                                self.challenge_table.refresh()
+                                print("Challenge table reloaded after download")
+                            except Exception as e:
+                                print(f"Error reloading challenge table: {e}")
+                                import logging
+                                logging.error(f"Failed to reload challenge table: {e}", exc_info=True)    
             
             except Exception as ex:
                 self._show_error(f"Error: {str(ex)}")
@@ -787,6 +857,70 @@ class SettingsTab(ft.Column):
         )
         self.page.snack_bar.open = True
         self.page.update()
+        
+    def _update_lotw_users(self, e):
+        """Download fresh LoTW user data"""
+        import threading
+        from backend.app_logging import get_logger
+        
+        logger = get_logger(__name__)
+        
+        self.lotw_update_button.disabled = True
+        self.lotw_update_button.text = "Updating..."
+        self.lotw_cache_text.value = "Downloading LoTW users..."
+        
+        try:
+            self.lotw_update_button.update()
+            self.lotw_cache_text.update()
+        except:
+            pass
+        
+        def update_thread():
+            try:
+                from backend.lotw_users import refresh_if_needed, get_user_count, get_cache_age_days
+                
+                logger.info("LOTW UPDATE → Downloading user list")
+                refresh_if_needed(force=True)
+                
+                user_count = get_user_count()
+                cache_age = get_cache_age_days()
+                
+                self.lotw_cache_text.value = f"LoTW Users: {user_count:,} ({cache_age} days old)"
+                self.lotw_cache_text.color = ft.Colors.GREEN
+                
+                logger.info(f"LOTW UPDATE ✓ Downloaded {user_count:,} users")
+                
+                self.page.snack_bar = ft.SnackBar(
+                    content=ft.Text(f"Success! {user_count:,} LoTW users updated"),
+                    bgcolor=ft.Colors.GREEN_400,
+                )
+                self.page.snack_bar.open = True
+                
+            except Exception as ex:
+                logger.error(f"LOTW UPDATE ✗ Failed: {ex}")
+                
+                self.lotw_cache_text.value = "Update failed"
+                self.lotw_cache_text.color = ft.Colors.RED
+                
+                self.page.snack_bar = ft.SnackBar(
+                    content=ft.Text(f"Update failed: {str(ex)}"),
+                    bgcolor=ft.Colors.RED_400,
+                )
+                self.page.snack_bar.open = True
+            
+            finally:
+                self.lotw_update_button.disabled = False
+                self.lotw_update_button.text = "Update LoTW Users"
+                
+                try:
+                    self.lotw_update_button.update()
+                    self.lotw_cache_text.update()
+                    self.page.update()
+                except:
+                    pass
+        
+        thread = threading.Thread(target=update_thread, daemon=True)
+        thread.start()
     
     def _show_error(self, message):
         """Show error snackbar"""
@@ -810,3 +944,35 @@ class SettingsTab(ft.Column):
             self.connect_button.update()
         except:
             pass
+            
+# Migrate old credentials from config.ini to secure storage
+        self._migrate_old_credentials()
+
+    def _migrate_old_credentials(self):
+        """One-time migration from config.ini to secure storage"""
+        from backend.config import load_config
+        from backend.secure_credentials import save_lotw_credentials, credentials_exist
+        
+        # Only migrate if no secure credentials exist
+        if credentials_exist():
+            return
+        
+        config = load_config()
+        old_user = config.get('lotw', 'username', fallback='')
+        old_pass = config.get('lotw', 'password', fallback='')
+        
+        if old_user and old_pass:
+            print("Migrating LoTW credentials to secure storage...")
+            save_lotw_credentials(old_user, old_pass)
+            
+            # Clear from config.ini
+            if 'lotw' in config:
+                if 'username' in config['lotw']:
+                    del config['lotw']['username']
+                if 'password' in config['lotw']:
+                    del config['lotw']['password']
+                
+                from backend.config import save_config
+                save_config(config)
+                
+            print("Migration complete - credentials removed from config.ini")

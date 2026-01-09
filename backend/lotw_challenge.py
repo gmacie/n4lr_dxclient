@@ -11,6 +11,7 @@ from datetime import datetime
 import re
 import time
 
+from backend.file_paths import get_challenge_data_file
 
 def download_challenge_qsos(username, password, since_date=None, start_date=None, callsign=None, progress_callback=None):
     """
@@ -270,9 +271,12 @@ def parse_challenge_adif(adif_text, existing_data=None):
     
     return result
 
-
-def save_challenge_data(data, filename="challenge_data.json"):
+def save_challenge_data(data, filename=None):    
     """Save challenge data to JSON file"""
+    if filename is None:
+        from backend.file_paths import get_challenge_data_file
+        filename = get_challenge_data_file()
+        
     try:
         Path(filename).write_text(json.dumps(data, indent=2))
         print(f"Saved challenge data to {filename}")
@@ -316,7 +320,8 @@ def download_and_parse_challenge(username, password, since_date=None, start_date
     # Load existing data for incremental update
     existing_data = None
     if since_date:
-        challenge_file = Path("challenge_data.json")
+        
+        challenge_file = get_challenge_data_file()
         if challenge_file.exists():
             try:
                 existing_data = json.loads(challenge_file.read_text())

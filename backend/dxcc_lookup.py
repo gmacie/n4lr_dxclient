@@ -3,25 +3,15 @@
 Maps VE7CC cluster prefixes to DXCC entity numbers using CTY.DAT.
 """
 
+import sys
 import json
 from pathlib import Path
 from typing import Optional, Dict
 
-import sys
+from backend.file_paths import get_cty_dat_file, get_dxcc_mapping_file
 
-def get_resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller"""
-    try:
-        base_path = Path(sys._MEIPASS)
-    except Exception:
-        base_path = Path.cwd()
-    return base_path / relative_path
-
-#CTY_FILE = Path("cty.dat")
-#DXCC_MAPPING_FILE = Path("dxcc_mapping.json")
-
-CTY_FILE = get_resource_path("cty.dat")
-DXCC_MAPPING_FILE = get_resource_path("dxcc_mapping.json")
+CTY_FILE = get_cty_dat_file()
+DXCC_MAPPING_FILE = get_dxcc_mapping_file()
 
 # Global lookup tables
 _prefix_to_country: Dict[str, str] = {}  # VE7CC prefix -> CTY country name
@@ -95,7 +85,6 @@ def load_cty_dat():
     print(f"Loaded {len(_prefix_to_country)} prefix mappings")
     return True
 
-
 def load_dxcc_mapping():
     """Load DXCC number -> country name mapping from LoTW data"""
     global _country_to_dxcc
@@ -106,24 +95,27 @@ def load_dxcc_mapping():
         return False
     
     print(f"Loading {DXCC_MAPPING_FILE}...")
-    dxcc_to_lotw = json.loads(DXCC_MAPPING_FILE.read_text())
+    dxcc_to_name = json.loads(DXCC_MAPPING_FILE.read_text(encoding='utf-8'))
     
-    # Create reverse mapping: LoTW country name -> DXCC number
-    lotw_to_dxcc = {v: k for k, v in dxcc_to_lotw.items()}
+    # Create reverse mapping: country name -> DXCC number
+    name_to_dxcc = {v.upper(): k for k, v in dxcc_to_name.items()}
     
     # Build CTY country -> DXCC number mapping (with overrides)
     for cty_country in set(_prefix_to_country.values()):
-        # Check if we have an override
-        lotw_country = CTY_TO_LOTW_OVERRIDES.get(cty_country, cty_country.upper())
+        # Try exact match first (uppercase)
+        cty_upper = cty_country.upper()
+        dxcc_num = name_to_dxcc.get(cty_upper)
         
-        # Look up DXCC number
-        dxcc_num = lotw_to_dxcc.get(lotw_country)
+        if not dxcc_num:
+            # Check if we have an override
+            lotw_country = CTY_TO_LOTW_OVERRIDES.get(cty_country, cty_upper)
+            dxcc_num = name_to_dxcc.get(lotw_country)
+        
         if dxcc_num:
             _country_to_dxcc[cty_country] = dxcc_num
     
     print(f"Mapped {len(_country_to_dxcc)} countries to DXCC numbers")
     return True
-
 
 def initialize():
     """Load all lookup data"""
@@ -134,6 +126,8 @@ def initialize():
     print("DXCC lookup initialized successfully")
     return True
 
+# Alias for more descriptive naming
+initialize_dxcc_lookup = initialize
 
 def lookup_dxcc_from_prefix(prefix: str) -> Optional[str]:
     """

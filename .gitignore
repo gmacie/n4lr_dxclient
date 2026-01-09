@@ -25,6 +25,26 @@ wheels/
 .installed.cfg
 *.egg
 
+# Credential files - NEVER commit these!
+lotw_credentials.enc
+.credential_key
+config.ini
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# User data files (runtime generated)
+data/user/
+
+# But keep structure
+!data/user/.gitkeep
+
+# Static data files are committed
+# (in data/static/)
+
+
 # IDE
 .vscode/
 .idea/

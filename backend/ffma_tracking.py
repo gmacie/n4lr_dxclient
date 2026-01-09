@@ -7,20 +7,12 @@ Parses LoTW ADIF file to find confirmed 6m QSOs with grid squares
 from pathlib import Path
 import json
 from datetime import datetime
-
 import sys
 
-def get_resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller"""
-    try:
-        base_path = Path(sys._MEIPASS)
-    except Exception:
-        base_path = Path.cwd()
-    return base_path / relative_path
+from backend.file_paths import get_ffma_grids_file, get_ffma_data_file
 
 # Official 488 FFMA grids (extracted from ARRL LOTW)
 FFMA_GRIDS = None  # Loaded from ffma_grids.json
-
 
 def load_ffma_grids():
     """Load the official 488 FFMA grids"""
@@ -29,8 +21,8 @@ def load_ffma_grids():
     if FFMA_GRIDS is not None:
         return FFMA_GRIDS
     
-    grids_file = get_resource_path("ffma_grids.json")
-    #grids_file = Path("ffma_grids.json")
+    grids_file = get_ffma_grids_file()
+    
     if grids_file.exists():
         try:
             FFMA_GRIDS = set(json.loads(grids_file.read_text()))
@@ -76,6 +68,7 @@ def parse_lotw_adif_for_ffma(adif_file_path, home_grid=None):
         try:
             from backend.config import get_user_grid
             home_grid = get_user_grid()
+            print(f"DEBUG: Normalized home_grid: '{home_grid}'")
         except:
             home_grid = None
     
@@ -118,11 +111,17 @@ def parse_lotw_adif_for_ffma(adif_file_path, home_grid=None):
         import re
         matches = re.findall(r'<([^:>]+):(\d+)(?::([^>]+))?>([^<]*)', record)
         
+        #for match in matches:
+        #    field_name = match[0].strip()
+        #    field_len = int(match[1])
+        #    field_value = match[3][:field_len] if len(match[3]) >= field_len else match[3]
+        #    fields[field_name] = field_value.strip()
+        
         for match in matches:
             field_name = match[0].strip()
             field_len = int(match[1])
             field_value = match[3][:field_len] if len(match[3]) >= field_len else match[3]
-            fields[field_name] = field_value.strip()
+            fields[field_name] = field_value.strip()  # ADD .strip() here!
         
         # Check if this is a 6m QSO with a grid
         band = fields.get('BAND', '')
@@ -139,6 +138,10 @@ def parse_lotw_adif_for_ffma(adif_file_path, home_grid=None):
         # Filter by home grid if specified  # ADD THESE LINES
         if home_grid and my_grid:
             my_grid_4char = my_grid[:4] if len(my_grid) >= 4 else my_grid
+            #print(f"DEBUG: Comparing '{my_grid_4char}' == '{home_grid}': {my_grid_4char == home_grid}")
+            # DEBUG - log first 10 filtered QSOs to see what's happening
+            if skipped_other_grids < 10:
+                print(f"DEBUG: Skipping QSO - MY_GRIDSQUARE={my_grid_4char}, HOME={home_grid}, CALL={call}, THEIR_GRID={grid}")
             if my_grid_4char != home_grid:
                 skipped_other_grids += 1
                 continue
@@ -174,6 +177,10 @@ def parse_lotw_adif_for_ffma(adif_file_path, home_grid=None):
             if norm_grid not in ffma_grids:
                 continue
             
+            # DEBUG - log first 10 accepted grids
+            if len(worked_grids) < 10:
+                print(f"DEBUG: ACCEPTED - MY_GRID={my_grid}, THEIR_GRID={norm_grid}, CALL={call}")
+            
             # Store the first/earliest QSO for each grid
             if norm_grid not in worked_grids:
                 worked_grids[norm_grid] = {
@@ -193,7 +200,7 @@ def is_grid_worked(grid):
     """Check if a grid has been worked (uses cached data)"""
     if not hasattr(is_grid_worked, '_cache'):
         # Try to load from saved file
-        data_file = Path("ffma_data.json")
+        data_file = get_ffma_data_file()
         if data_file.exists():
             try:
                 data = json.loads(data_file.read_text())
@@ -215,8 +222,11 @@ def is_grid_needed(grid):
     return not is_grid_worked(grid)
 
 
-def save_ffma_data(worked_grids, filename="ffma_data.json"):
+def save_ffma_data(worked_grids, filename=None):
     """Save worked grids to JSON file"""
+    
+    if filename is None:
+        filename = get_ffma_data_file()
     
     data = {
         "total_ffma_grids": 488,
@@ -237,7 +247,7 @@ def save_ffma_data(worked_grids, filename="ffma_data.json"):
 
 def get_ffma_stats():
     """Get FFMA statistics"""
-    data_file = Path("ffma_data.json")
+    data_file = get_ffma_data_file()
     if data_file.exists():
         try:
             return json.loads(data_file.read_text())

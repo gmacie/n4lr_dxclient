@@ -10,17 +10,10 @@ from pathlib import Path
 from typing import Set, Tuple, Dict
 import sys
 
-def get_resource_path(relative_path):
-    """Get absolute path to resource, works for dev and for PyInstaller"""
-    try:
-        base_path = Path(sys._MEIPASS)
-    except Exception:
-        base_path = Path.cwd()
-    return base_path / relative_path
+from backend.file_paths import get_challenge_data_file
 
 # Path to saved challenge data
-#CHALLENGE_JSON = Path("challenge_data.json")
-CHALLENGE_JSON = get_resource_path("challenge_data.json")
+CHALLENGE_JSON = get_challenge_data_file()
 
 # Global challenge data
 _worked_band_entity: Set[Tuple[str, int]] = set()  # (band, dxcc_num)
