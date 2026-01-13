@@ -18,23 +18,27 @@ def load_ffma_grids():
     """Load the official 488 FFMA grids"""
     global FFMA_GRIDS
     
+    # Return cached grids if already loaded
     if FFMA_GRIDS is not None:
         return FFMA_GRIDS
-    
+        
     grids_file = get_ffma_grids_file()
     
     if grids_file.exists():
         try:
-            FFMA_GRIDS = set(json.loads(grids_file.read_text()))
+            #FFMA_GRIDS = set(json.loads(grids_file.read_text()))
+            data = json.loads(grids_file.read_text())
+            FFMA_GRIDS = set(data)
             print(f"Loaded {len(FFMA_GRIDS)} FFMA grids")
             return FFMA_GRIDS
         except Exception as e:
             print(f"Error loading FFMA grids: {e}")
+    else:
+        print(f"FFMA grids file NOT FOUND: {grids_file} [e]")
+        return set()
     
-    # Fallback: empty set
-    FFMA_GRIDS = set()
-    return FFMA_GRIDS
-
+    print(f"FFMA grids file not found: {grids_file}")
+    return set()
 
 def normalize_grid(grid):
     """Normalize grid to 4-character format"""

@@ -24,10 +24,9 @@ def get_data_directory():
     """Get the data directory (creates if doesn't exist)"""
     data_dir = get_app_directory() / "data"
     
-    # DEBUG - print to see what's happening
-    print(f"DEBUG: App directory: {get_app_directory()}")
-    print(f"DEBUG: Data directory: {data_dir}")
-    print(f"DEBUG: Data directory exists: {data_dir.exists()}")
+    #Print(f"DEBUG: App directory: {get_app_directory()}")
+    #print(f"DEBUG: Data directory: {data_dir}")
+    #print(f"DEBUG: Data directory exists: {data_dir.exists()}")
     
     data_dir.mkdir(exist_ok=True)
     return data_dir
@@ -61,9 +60,6 @@ def get_dxcc_overrides_file():
 
 def get_cty_dat_file():
     return get_static_data_directory() / "cty.dat"
-    
-def get_ffma_data_file():
-    return get_user_data_directory() / "ffma_data.json"
 
 def get_ffma_grids_file():
     return get_static_data_directory() / "ffma_grids.json"
@@ -75,9 +71,9 @@ def get_config_file():
 
 def get_challenge_data_file():
     return get_user_data_directory() / "challenge_data.json"
-
-def get_ffma_grids_file():
-    return get_user_data_directory() / "ffma_grids.json"
+    
+def get_ffma_data_file():
+    return get_user_data_directory() / "ffma_data.json"
 
 def get_lotw_users_file():
     return get_user_data_directory() / "lotw_users.json"

@@ -9,10 +9,12 @@ pyinstaller ^
     --name=N4LR-DXClient ^
     --onefile ^
     --windowed ^
-	--hidden-import=_cffi_backend ^
-	--collect-all flet ^
+    --hidden-import=_cffi_backend ^
+    --collect-all flet ^
     --collect-all flet_desktop ^
-	--exclude-module=PyQt5 ^
+    --add-data "frontend;frontend" ^
+    --add-data "backend;backend" ^
+    --exclude-module=PyQt5 ^
     --exclude-module=PyQt6 ^
     --exclude-module=PySide2 ^
     --exclude-module=PySide6 ^

@@ -13,7 +13,7 @@ from backend.solar import fetch_solar_data, get_solar_data
 
 from frontend.components.status_bar import build_status_bar
 from frontend.components.band_schedule_dialog import BandScheduleDialog
-from frontend.components.ffma_table import FFMATable
+from frontend.components.ffma_display import FFMADisplay
 
 from backend.cluster_async import start_connection
 from backend.config import get_user_grid, get_auto_connect, load_config, save_config
@@ -69,6 +69,10 @@ class MainUI(ft.Column):
 
         # spot table
         self.table = LiveSpotTable()
+        
+        # Command response display
+        from frontend.components.command_response_display import CommandResponseDisplay
+        self.command_response = CommandResponseDisplay()
         
         # Band selection - checkboxes for multi-select (RIGHT SIDE PANEL)
         self.band_checkboxes = {}
@@ -236,6 +240,7 @@ class MainUI(ft.Column):
         left_side = ft.Column([
             other_filters_row,
             command_row,
+            self.command_response,
             ft.Divider(),
             self.table,
         ], expand=True)
@@ -248,7 +253,7 @@ class MainUI(ft.Column):
         # Build Settings tab
         # Create challenge tab first so we can pass reference to settings
         self.challenge_table = ChallengeTable()
-        self.ffma_table = FFMATable()  # Create FFMA table
+        self.ffma_table = FFMADisplay()  # Create FFMA table
         
         settings_tab_content = SettingsTab(
             page=self.page,
@@ -694,6 +699,14 @@ class MainUI(ft.Column):
                     command_queue.put_nowait(cmd)
                 except:
                     pass
+            return
+            
+        # Handle cluster responses (server output)
+        if mtype == "cluster_response":
+            response = msg.get("data", "")
+            if response and hasattr(self, 'command_response'):
+                self.command_response.add_response(response)
+            return    
 
     # ------------------------------------------------------------
     # FILTERS

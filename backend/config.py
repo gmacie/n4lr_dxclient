@@ -208,6 +208,29 @@ def set_watch_list(callsigns):
     config['filters']['watch_list'] = ','.join(callsigns)
     save_config(config)
 
+def get_voice_alert_list():
+    """Get voice alert list from config"""
+    config = load_config()
+    if 'display' not in config:
+        return []
+    
+    alert_str = config.get('display', 'voice_alert_list', fallback='')
+    if not alert_str:
+        return []
+    
+    return [call.strip().upper() for call in alert_str.split(',') if call.strip()]
+
+
+def set_voice_alert_list(callsigns):
+    """Save voice alert list to config"""
+    config = load_config()
+    if 'display' not in config:
+        config['display'] = {}
+    
+    config['display']['voice_alert_list'] = ','.join(callsigns)
+    save_config(config)
+
+
 def get_grid_chasing_enabled():
     """Get grid chasing enabled state"""
     config = load_config()
@@ -220,3 +243,4 @@ def set_grid_chasing_enabled(enabled):
         config['display'] = {}
     config['display']['grid_chasing_enabled'] = str(enabled)
     save_config(config)
+    

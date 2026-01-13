@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 from PyInstaller.utils.hooks import collect_all
 
-datas = []
+datas = [('frontend', 'frontend'), ('backend', 'backend')]
 binaries = []
 hiddenimports = ['_cffi_backend']
 tmp_ret = collect_all('flet')

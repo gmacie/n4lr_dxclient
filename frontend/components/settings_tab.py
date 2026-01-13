@@ -11,6 +11,9 @@ from backend.config import (
 from backend.grid_utils import validate_grid
 from backend.cluster_async import start_connection, stop_connection
 
+from backend.app_logging import get_logger
+
+logger = get_logger(__name__)
 
 class SettingsTab(ft.Column):
     """Settings tab for user configuration and cluster controls"""
@@ -154,6 +157,33 @@ class SettingsTab(ft.Column):
         self.clear_watch_button = ft.ElevatedButton(
             text="Clear All",
             on_click=self._clear_watch_list,
+        )
+
+        # Voice Alert section
+        from backend.config import get_voice_alert_list
+        voice_alert_list = get_voice_alert_list()
+        
+        self.voice_alert_field = ft.TextField(
+            label="Voice Alert List",
+            hint_text="Enter callsigns separated by commas (e.g., 3B7A,FT5ZM,VK0EK)",
+            value=', '.join(voice_alert_list) if voice_alert_list else '',
+            width=500,
+        )
+        
+        self.voice_alert_count_text = ft.Text(
+            f"Voice alerts for {len(voice_alert_list)} callsign(s)",
+            size=12,
+            color=ft.Colors.BLUE_GREY_400,
+        )
+        
+        self.save_voice_alert_button = ft.ElevatedButton(
+            text="Save Voice Alerts",
+            on_click=self._save_voice_alert_list,
+        )
+        
+        self.clear_voice_alert_button = ft.ElevatedButton(
+            text="Clear All",
+            on_click=self._clear_voice_alert_list,
         )
         
         # LoTW Users Database section
@@ -333,6 +363,32 @@ class SettingsTab(ft.Column):
             
             ft.Text(
                 "💡 Tip: Add rare DX, friends, or targets you're hunting",
+                size=12,
+                color=ft.Colors.ORANGE_400,
+            ),
+
+            ft.Container(height=40),
+            ft.Text("Voice Alerts", size=20, weight=ft.FontWeight.BOLD),
+            ft.Divider(),
+            
+            ft.Text(
+                "Speak callsign when spotted (rare DX, expeditions, etc.)",
+                size=12,
+                color=ft.Colors.BLUE_GREY_400,
+            ),
+            
+            ft.Container(height=10),
+            
+            self.voice_alert_field,
+            self.voice_alert_count_text,
+            
+            ft.Row([
+                self.save_voice_alert_button,
+                self.clear_voice_alert_button,
+            ], spacing=10),
+            
+            ft.Text(
+                "🔊 Tip: Spoken alerts for rare DX you're actively chasing",
                 size=12,
                 color=ft.Colors.ORANGE_400,
             ),
@@ -816,13 +872,19 @@ class SettingsTab(ft.Column):
     def _save_watch_list(self, e):
         """Save watch list"""
         from backend.config import set_watch_list
+        from backend.app_logging import get_logger
+        
+        logger = get_logger(__name__)
         
         text = self.watch_list_field.value.strip()
-        
+                
         if not text:
             callsigns = []
         else:
             callsigns = [s.strip().upper() for s in text.split(',') if s.strip()]
+        
+        # Log to terminal and app.log
+        logger.info(f"WATCH LIST - Saving {len(callsigns)} callsign(s): {', '.join(callsigns) if callsigns else '(empty)'}")
         
         set_watch_list(callsigns)
         
@@ -843,6 +905,10 @@ class SettingsTab(ft.Column):
     def _clear_watch_list(self, e):
         """Clear watch list"""
         from backend.config import set_watch_list
+        from backend.app_logging import get_logger
+        
+        logger = get_logger(__name__)
+        logger.info("WATCH LIST - Cleared all callsigns")
         
         set_watch_list([])
         self.watch_list_field.value = ''
@@ -853,6 +919,57 @@ class SettingsTab(ft.Column):
         
         self.page.snack_bar = ft.SnackBar(
             content=ft.Text("Cleared watch list"),
+            bgcolor=ft.Colors.GREEN_400,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+
+    def _save_voice_alert_list(self, e):
+        """Save voice alert list"""
+        from backend.config import set_voice_alert_list
+        from backend.app_logging import get_logger
+        
+        logger = get_logger(__name__)
+        
+        text = self.voice_alert_field.value.strip()
+        
+        if not text:
+            callsigns = []
+        else:
+            callsigns = [s.strip().upper() for s in text.split(',') if s.strip()]
+        
+        # Log to terminal and app.log
+        logger.info(f"VOICE ALERT - Saving {len(callsigns)} callsign(s): {', '.join(callsigns) if callsigns else '(empty)'}")
+        
+        set_voice_alert_list(callsigns)
+        
+        self.voice_alert_count_text.value = f"Voice alerts for {len(callsigns)} callsign(s)"
+        self.voice_alert_count_text.update()
+        
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text(f"Saved {len(callsigns)} voice alert(s)"),
+            bgcolor=ft.Colors.GREEN_400,
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+    
+    def _clear_voice_alert_list(self, e):
+        """Clear voice alert list"""
+        from backend.config import set_voice_alert_list
+        from backend.app_logging import get_logger
+        
+        logger = get_logger(__name__)
+        logger.info("VOICE ALERT - Cleared all callsigns")
+        
+        set_voice_alert_list([])
+        self.voice_alert_field.value = ''
+        self.voice_alert_count_text.value = "Voice alerts for 0 callsign(s)"
+        
+        self.voice_alert_field.update()
+        self.voice_alert_count_text.update()
+        
+        self.page.snack_bar = ft.SnackBar(
+            content=ft.Text("Cleared voice alert list"),
             bgcolor=ft.Colors.GREEN_400,
         )
         self.page.snack_bar.open = True
@@ -879,7 +996,7 @@ class SettingsTab(ft.Column):
             try:
                 from backend.lotw_users import refresh_if_needed, get_user_count, get_cache_age_days
                 
-                logger.info("LOTW UPDATE → Downloading user list")
+                logger.info("LOTW UPDATE - Downloading user list")
                 refresh_if_needed(force=True)
                 
                 user_count = get_user_count()
@@ -888,7 +1005,7 @@ class SettingsTab(ft.Column):
                 self.lotw_cache_text.value = f"LoTW Users: {user_count:,} ({cache_age} days old)"
                 self.lotw_cache_text.color = ft.Colors.GREEN
                 
-                logger.info(f"LOTW UPDATE ✓ Downloaded {user_count:,} users")
+                logger.info(f"LOTW UPDATE - Downloaded {user_count:,} users")
                 
                 self.page.snack_bar = ft.SnackBar(
                     content=ft.Text(f"Success! {user_count:,} LoTW users updated"),
@@ -897,7 +1014,7 @@ class SettingsTab(ft.Column):
                 self.page.snack_bar.open = True
                 
             except Exception as ex:
-                logger.error(f"LOTW UPDATE ✗ Failed: {ex}")
+                logger.error(f"LOTW UPDATE - Failed: {ex}")
                 
                 self.lotw_cache_text.value = "Update failed"
                 self.lotw_cache_text.color = ft.Colors.RED

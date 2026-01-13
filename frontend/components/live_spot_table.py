@@ -1,6 +1,8 @@
 import flet as ft
 import time
 from datetime import datetime, timedelta
+from backend.config import get_voice_alert_list
+
 
 try:
     from backend.lotw_users import is_lotw_user, get_upload_age_days
@@ -56,6 +58,9 @@ class LiveSpotTable(ft.Column):
         from backend.config import get_watch_list
         self.watch_list = set(get_watch_list())  # Use set for O(1) lookup
         
+        # Voice alert list
+        self.voice_alert_list = set(get_voice_alert_list())
+        
         # Initialize with all bands selected by default
         self.filter_bands: list[str] = ["160M", "80M", "60M", "40M", "30M", "20M", "17M", "15M", "12M", "10M", "6M"]
         self.filter_grid: str = ""
@@ -99,6 +104,7 @@ class LiveSpotTable(ft.Column):
                 ft.DataColumn(ft.Text("Grid")),
                 ft.DataColumn(ft.Text("Spotter")),
                 ft.DataColumn(ft.Text("Comment")),
+                ft.DataColumn(ft.Text("")),  # Empty header for delete button
             ],
             rows=[],
             column_spacing=10,
@@ -125,6 +131,11 @@ class LiveSpotTable(ft.Column):
         from backend.config import get_watch_list
         self.watch_list = set(get_watch_list())
         self._rebuild_table()
+        
+    def refresh_voice_alert_list(self):
+        """Reload voice alert list from config"""
+        from backend.config import get_voice_alert_list
+        self.voice_alert_list = set(get_voice_alert_list())
     
     def set_needed_spot_duration(self, minutes: int):
         """Update how long to keep needed spots"""
@@ -164,6 +175,19 @@ class LiveSpotTable(ft.Column):
         # Check if callsign is on watch list
         call = spot.get("call", "")
         is_on_watch_list = call.upper() in self.watch_list
+        
+        # Check if callsign is on voice alert list
+        is_on_voice_alert = call.upper() in self.voice_alert_list
+        
+        # Trigger voice alert if on list
+        if is_on_voice_alert:
+            try:
+                from backend.voice_alert import speak_callsign
+                band = spot.get("band", "")
+                speak_callsign(call, band)
+            except Exception as e:
+                # Don't crash if voice alert fails
+                logger.error(f"Voice alert failed: {e}")
         
         # Check if this spot is needed for Challenge
         is_spot_needed_challenge = False
@@ -319,6 +343,17 @@ class LiveSpotTable(ft.Column):
         
         return True
     
+    def _delete_spot(self, spot: dict):
+        """Delete a specific spot from both buffers"""
+        def handler(e):
+            # Remove from needed spots
+            self.needed_spots = [s for s in self.needed_spots if s is not spot]
+            # Remove from regular spots
+            self.regular_spots = [s for s in self.regular_spots if s is not spot]
+            # Rebuild table
+            self._rebuild_rows()
+        return handler
+    
     def _rebuild_rows(self):
         """Rebuild table rows from both buffers, needed spots first"""
         rows: list[ft.DataRow] = []
@@ -405,6 +440,15 @@ class LiveSpotTable(ft.Column):
                     ft.DataCell(ft.Text(s.get("grid", ""), color=text_color)),
                     ft.DataCell(ft.Text(s.get("spotter", ""), color=text_color)),
                     ft.DataCell(ft.Text(s.get("comment", ""), color=text_color)),
+                    ft.DataCell(  # DELETE BUTTON
+                        ft.IconButton(
+                            icon=ft.Icons.CLOSE,
+                            icon_size=16,
+                            icon_color=ft.Colors.RED_400,
+                            tooltip="Delete spot",
+                            on_click=self._delete_spot(s),
+                        )
+                    ),
                 ],
                 color=highlight_color,
             )

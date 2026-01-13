@@ -129,6 +129,12 @@ async def run_cluster_monitor(server_host: str = None, server_port: int = None):
                     if not s:
                         continue
                         
+                    # Publish non-spot responses for command display
+                    if not s.startswith("DX de ") and not s.startswith("CC11"):
+                        # Check if it's not a spot or data line
+                        if not s.startswith(("WWV", "WCY", "To ", "---")) and "-2025" not in s:
+                            publish({"type": "cluster_response", "data": s})
+                        
                     # Parse WWV solar data from cluster
                     if s.startswith("WWV"):
                         # Skip WWV header line
@@ -215,6 +221,9 @@ async def handle_commands(writer):
     try:
         while True:
             cmd = await command_queue.get()
+            
+            # Publish command for display
+            publish({"type": "cluster_command_sent", "data": cmd})
             
             # Ensure command ends with newline
             if not cmd.endswith("\n"):
